@@ -7,6 +7,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Canvas, Path, Skia } from '@shopify/react-native-skia';
+import type { SkPath } from '@shopify/react-native-skia';
 import {
   Gesture,
   GestureDetector,
@@ -14,6 +15,7 @@ import {
 } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DrawingEngine } from '../engine/DrawingEngine';
 import { LayerManager } from '../engine/LayerManager';
 import { ToolController } from '../engine/ToolController';
@@ -35,12 +37,29 @@ import Icon from 'react-native-vector-icons/Feather';
 
 const { width, height } = Dimensions.get('window');
 
+type DrawnStroke = {
+  id: string;
+  path: SkPath;
+  color: string;
+  strokeWidth: number;
+  opacity: number;
+  layerId: string;
+  svgPath: string;
+};
+
+type CanvasLayer = Layer & {
+  strokes: DrawnStroke[];
+};
+
+const createStrokeId = () =>
+  `stroke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 export const CanvasScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
 
   // Core state
-  const [paths, setPaths] = useState<any[]>([]);
   const [selectedTool, setSelectedTool] = useState<Tool>('brush');
   const [brushSettings, setBrushSettings] = useState<BrushSettings>({
     size: 10,
@@ -49,7 +68,7 @@ export const CanvasScreen: React.FC = () => {
   });
   const [primaryColor, setPrimaryColor] = useState('#000000');
   const [secondaryColor, setSecondaryColor] = useState('#FFFFFF');
-  const [layers, setLayers] = useState<Layer[]>([
+  const [layers, setLayers] = useState<CanvasLayer[]>([
     {
       id: '1',
       name: 'Layer 1',
@@ -58,9 +77,15 @@ export const CanvasScreen: React.FC = () => {
       opacity: 1,
       blendMode: 'normal',
       strokes: [],
+      x: 0,
+      y: 0,
+      width,
+      height,
     },
   ]);
   const [selectedLayerId, setSelectedLayerId] = useState('1');
+  const [currentStroke, setCurrentStroke] = useState<DrawnStroke | null>(null);
+  const currentStrokeRef = useRef<DrawnStroke | null>(null);
 
   // UI state
   const [colorPickerVisible, setColorPickerVisible] = useState(false);
@@ -106,33 +131,104 @@ export const CanvasScreen: React.FC = () => {
 
   // Drawing gesture handlers
   const handleDrawStart = (x: number, y: number) => {
-    if (selectedTool === 'brush' || selectedTool === 'pencil') {
-      drawingEngine.startStroke(
-        { x, y },
-        primaryColor,
-        brushSettings.size,
-        brushSettings.opacity,
-      );
+    if (selectedTool !== 'brush' && selectedTool !== 'pencil') {
+      return;
+    }
+
+    const activeLayer = layers.find(layer => layer.id === selectedLayerId);
+    if (!activeLayer || activeLayer.locked || !activeLayer.visible) {
+      currentStrokeRef.current = null;
+      setCurrentStroke(null);
+      return;
+    }
+
+    drawingEngine.startStroke(
+      { x, y },
+      primaryColor,
+      brushSettings.size,
+      brushSettings.opacity,
+    );
+
+    const path = drawingEngine.getCurrentPath();
+    if (path) {
+      const strokeId = createStrokeId();
+      const newStroke: DrawnStroke = {
+        id: strokeId,
+        path: path.copy(),
+        color: primaryColor,
+        strokeWidth: brushSettings.size,
+        opacity: brushSettings.opacity,
+        layerId: activeLayer.id,
+        svgPath: path.toSVGString(),
+      };
+      currentStrokeRef.current = newStroke;
+      setCurrentStroke(newStroke);
     }
   };
 
   const handleDrawUpdate = (x: number, y: number) => {
-    if (selectedTool === 'brush' || selectedTool === 'pencil') {
-      drawingEngine.addStrokePoint({ x, y });
-      setPaths([...paths]);
+    if (!currentStrokeRef.current) {
+      return;
+    }
+
+    drawingEngine.addStrokePoint({ x, y });
+    const path = drawingEngine.getCurrentPath();
+
+    if (path) {
+      const updatedStroke: DrawnStroke = {
+        ...currentStrokeRef.current,
+        path: path.copy(),
+        svgPath: path.toSVGString(),
+      };
+      currentStrokeRef.current = updatedStroke;
+      setCurrentStroke(updatedStroke);
     }
   };
 
   const handleDrawEnd = () => {
-    if (selectedTool === 'brush' || selectedTool === 'pencil') {
-      const stroke = drawingEngine.endStroke();
-      if (stroke) {
-        setPaths([...paths, drawingEngine.getCurrentPath()]);
-        undoRedoManager.saveState(layers);
-        autoSaveManager.markAsModified();
-        hapticManager.strokeCommit();
-      }
+    const baseStroke = currentStrokeRef.current;
+    const path = drawingEngine.getCurrentPath();
+
+    let completedStroke: DrawnStroke | null = null;
+    if (baseStroke && path) {
+      completedStroke = {
+        ...baseStroke,
+        path: path.copy(),
+        svgPath: path.toSVGString(),
+      };
+    } else if (baseStroke) {
+      completedStroke = {
+        ...baseStroke,
+        path: baseStroke.path.copy(),
+        svgPath:
+          baseStroke.svgPath ||
+          (typeof baseStroke.path.toSVGString === 'function'
+            ? baseStroke.path.toSVGString()
+            : ''),
+      };
     }
+
+    drawingEngine.endStroke();
+
+    if (completedStroke) {
+      setLayers(prevLayers => {
+        const updatedLayers = prevLayers.map(layer =>
+          layer.id === completedStroke.layerId
+            ? {
+                ...layer,
+                strokes: [...layer.strokes, completedStroke],
+              }
+            : layer,
+        );
+        undoRedoManager.saveState(updatedLayers);
+        return updatedLayers;
+      });
+      autoSaveManager.markAsModified();
+      hapticManager.strokeCommit();
+    }
+
+    currentStrokeRef.current = null;
+    setCurrentStroke(null);
   };
 
   // Drawing gesture with runOnJS
@@ -173,7 +269,9 @@ export const CanvasScreen: React.FC = () => {
   const handleUndo = () => {
     const previousState = undoRedoManager.undo();
     if (previousState) {
-      setLayers(previousState);
+      setLayers(previousState as CanvasLayer[]);
+      currentStrokeRef.current = null;
+      setCurrentStroke(null);
       hapticManager.undoRedo();
     }
   };
@@ -181,7 +279,9 @@ export const CanvasScreen: React.FC = () => {
   const handleRedo = () => {
     const nextState = undoRedoManager.redo();
     if (nextState) {
-      setLayers(nextState);
+      setLayers(nextState as CanvasLayer[]);
+      currentStrokeRef.current = null;
+      setCurrentStroke(null);
       hapticManager.undoRedo();
     }
   };
@@ -216,7 +316,7 @@ export const CanvasScreen: React.FC = () => {
       return;
     }
 
-    const newLayer: Layer = {
+    const newLayer: CanvasLayer = {
       id: Date.now().toString(),
       name: `Layer ${layers.length + 1}`,
       visible: true,
@@ -224,11 +324,18 @@ export const CanvasScreen: React.FC = () => {
       opacity: 1,
       blendMode: 'normal',
       strokes: [],
+      x: 0,
+      y: 0,
+      width,
+      height,
     };
 
-    setLayers([...layers, newLayer]);
+    setLayers(prevLayers => {
+      const updatedLayers = [...prevLayers, newLayer];
+      undoRedoManager.saveState(updatedLayers);
+      return updatedLayers;
+    });
     setSelectedLayerId(newLayer.id);
-    undoRedoManager.saveState([...layers, newLayer]);
     hapticManager.buttonPress();
   };
 
@@ -237,8 +344,8 @@ export const CanvasScreen: React.FC = () => {
 
     const newLayers = layers.filter(l => l.id !== layerId);
     setLayers(newLayers);
-    if (selectedLayerId === layerId) {
-      setSelectedLayerId(newLayers[0].id);
+    if (selectedLayerId === layerId && newLayers.length > 0) {
+      setSelectedLayerId(newLayers[newLayers.length - 1].id);
     }
     undoRedoManager.saveState(newLayers);
     hapticManager.buttonPress();
@@ -248,14 +355,23 @@ export const CanvasScreen: React.FC = () => {
     const layer = layers.find(l => l.id === layerId);
     if (!layer) return;
 
-    const duplicatedLayer: Layer = {
+    const duplicatedLayer: CanvasLayer = {
       ...layer,
       id: Date.now().toString(),
       name: `${layer.name} Copy`,
+      strokes: layer.strokes.map(stroke => ({
+        ...stroke,
+        id: createStrokeId(),
+        path: stroke.path.copy(),
+      })),
     };
 
-    setLayers([...layers, duplicatedLayer]);
-    undoRedoManager.saveState([...layers, duplicatedLayer]);
+    setLayers(prevLayers => {
+      const updatedLayers = [...prevLayers, duplicatedLayer];
+      undoRedoManager.saveState(updatedLayers);
+      return updatedLayers;
+    });
+    setSelectedLayerId(duplicatedLayer.id);
     hapticManager.buttonPress();
   };
 
@@ -321,10 +437,20 @@ export const CanvasScreen: React.FC = () => {
     }
   };
 
+  const currentStrokeLayerOpacity =
+    currentStroke
+      ? layers.find(layer => layer.id === currentStroke.layerId)?.opacity ?? 1
+      : 1;
+
   return (
     <GestureHandlerRootView style={styles.container}>
       {/* Top Bar */}
-      <View style={styles.topBar}>
+      <View
+        style={[
+          styles.topBar,
+          { paddingTop: insets.top + spacing.md },
+        ]}
+      >
         <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
           <Icon name="arrow-left" size={24} color={colors.text.dark} />
         </TouchableOpacity>
@@ -373,7 +499,12 @@ export const CanvasScreen: React.FC = () => {
 
       {/* Auto-save indicator */}
       {isAutoSaving && (
-        <View style={styles.autoSaveIndicator}>
+        <View
+          style={[
+            styles.autoSaveIndicator,
+            { top: insets.top + spacing.lg },
+          ]}
+        >
           <Text style={styles.autoSaveText}>Saving...</Text>
         </View>
       )}
@@ -386,31 +517,30 @@ export const CanvasScreen: React.FC = () => {
           <Canvas style={styles.canvas}>
             {/* Render all layers */}
             {layers.map(layer => {
-              if (!layer.visible) return null;
+              if (!layer.visible) {
+                return null;
+              }
 
-              return paths.map(
-                (path, index) =>
-                  path && (
-                    <Path
-                      key={`${layer.id}-${index}`}
-                      path={path}
-                      color={primaryColor}
-                      style="stroke"
-                      strokeWidth={brushSettings.size}
-                      opacity={layer.opacity * brushSettings.opacity}
-                    />
-                  ),
-              );
+              return layer.strokes.map(stroke => (
+                <Path
+                  key={stroke.id}
+                  path={stroke.path}
+                  color={stroke.color}
+                  style="stroke"
+                  strokeWidth={stroke.strokeWidth}
+                  opacity={layer.opacity * stroke.opacity}
+                />
+              ));
             })}
 
             {/* Current stroke preview */}
-            {drawingEngine.getCurrentPath() && (
+            {currentStroke && (
               <Path
-                path={drawingEngine.getCurrentPath()!}
-                color={primaryColor}
+                path={currentStroke.path}
+                color={currentStroke.color}
                 style="stroke"
-                strokeWidth={brushSettings.size}
-                opacity={brushSettings.opacity * 0.7}
+                strokeWidth={currentStroke.strokeWidth}
+                opacity={currentStrokeLayerOpacity * currentStroke.opacity}
               />
             )}
           </Canvas>
@@ -478,7 +608,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
     paddingBottom: spacing.md,
     backgroundColor: 'rgba(255,255,255,0.95)',
     borderBottomWidth: 1,
@@ -501,7 +630,6 @@ const styles = StyleSheet.create({
   },
   autoSaveIndicator: {
     position: 'absolute',
-    top: 80,
     right: 16,
     backgroundColor: 'rgba(0,0,0,0.7)',
     paddingHorizontal: 12,

@@ -93,7 +93,15 @@ export class UndoRedoManager {
   private deepCloneLayers(layers: Layer[]): Layer[] {
     return layers.map(layer => ({
       ...layer,
-      strokes: layer.strokes ? [...layer.strokes] : [],
+      strokes: layer.strokes
+        ? layer.strokes.map(stroke => ({
+            ...stroke,
+            path:
+              stroke?.path && typeof stroke.path.copy === 'function'
+                ? stroke.path.copy()
+                : stroke.path,
+          }))
+        : [],
     }));
   }
 

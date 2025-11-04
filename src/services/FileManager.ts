@@ -46,8 +46,9 @@ export class FileManager {
     const filePath = `${ARTWORKS_DIR}/${artwork.id}.bflow`;
 
     // Serialize artwork to JSON (simplified version of .bflow format)
+    const serializableArtwork = this.prepareArtworkForSerialization(artwork);
     const data = JSON.stringify({
-      ...artwork,
+      ...serializableArtwork,
       createdAt: artwork.createdAt.toISOString(),
       modifiedAt: artwork.modifiedAt.toISOString(),
     });
@@ -144,6 +145,32 @@ export class FileManager {
     // 4. Write to file system
 
     return exportPath;
+  }
+
+  private prepareArtworkForSerialization(artwork: Artwork): Artwork {
+    return {
+      ...artwork,
+      layers: artwork.layers.map(layer => {
+        const serializedStrokes = layer.strokes
+          ? layer.strokes.map(stroke => {
+              const { path, ...strokeRest } = stroke as any;
+              return {
+                ...strokeRest,
+                svgPath:
+                  strokeRest.svgPath ??
+                  (path && typeof path.toSVGString === 'function'
+                    ? path.toSVGString()
+                    : ''),
+              };
+            })
+          : [];
+
+        return {
+          ...layer,
+          strokes: serializedStrokes,
+        };
+      }),
+    };
   }
 
   async getStorageInfo(): Promise<{ used: number; available: number }> {

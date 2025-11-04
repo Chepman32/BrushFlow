@@ -1,3 +1,5 @@
+import type { SkPath } from '@shopify/react-native-skia';
+
 export type BlendMode =
   | 'normal'
   | 'multiply'
@@ -12,6 +14,16 @@ export type BlendMode =
   | 'difference'
   | 'exclusion';
 
+export interface LayerStroke {
+  id: string;
+  color: string;
+  opacity: number;
+  strokeWidth: number;
+  layerId: string;
+  svgPath: string;
+  path?: SkPath;
+}
+
 export interface Layer {
   id: string;
   name: string;
@@ -25,6 +37,7 @@ export interface Layer {
   height: number;
   // Bitmap data will be stored as base64 string for serialization
   bitmapData?: string;
+  strokes?: LayerStroke[];
 }
 
 export interface Artwork {
