@@ -8,7 +8,7 @@ export interface AppSettings {
   drawing: {
     pressureSensitivity: boolean;
     palmRejection: 'off' | 'low' | 'medium' | 'high';
-    autoSaveInterval: number; // seconds
+    autoSaveInterval: '15s' | '30s' | '1min' | '5min' | 'never';
     undoHistory: number; // steps
   };
   interface: {
@@ -37,7 +37,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   drawing: {
     pressureSensitivity: true,
     palmRejection: 'medium',
-    autoSaveInterval: 30,
+    autoSaveInterval: '30s',
     undoHistory: 50,
   },
   interface: {

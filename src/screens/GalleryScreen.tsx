@@ -9,7 +9,7 @@ import {
   Image,
   RefreshControl,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { DrawerNavigationProp } from '@react-navigation/drawer';
 import type { DrawerParamList } from '../navigation/types';
 import { FileManager, HapticManager, IAPManager } from '../services';
@@ -17,11 +17,60 @@ import { ArtworkMetadata } from '../types';
 import { colors, typography, spacing } from '../theme';
 import { SideMenu, PremiumModal, TutorialCarousel } from '../components';
 import Icon from 'react-native-vector-icons/Feather';
+import RNFS from 'react-native-fs';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - spacing.lg * 3) / 2;
 
 type NavigationProp = DrawerNavigationProp<DrawerParamList, 'Gallery'>;
+
+// Separate component for artwork card to use hooks properly
+const ArtworkCard: React.FC<{
+  item: ArtworkMetadata;
+  onPress: (id: string) => void;
+}> = ({ item, onPress }) => {
+  const [thumbnailExists, setThumbnailExists] = useState(false);
+
+  useEffect(() => {
+    const checkThumbnail = async () => {
+      if (item.thumbnailPath) {
+        const exists = await RNFS.exists(item.thumbnailPath);
+        setThumbnailExists(exists);
+      }
+    };
+    checkThumbnail();
+  }, [item.thumbnailPath]);
+
+  return (
+    <TouchableOpacity
+      style={styles.card}
+      onPress={() => onPress(item.id)}
+      activeOpacity={0.8}
+    >
+      <View style={styles.thumbnail}>
+        {item.thumbnailPath && thumbnailExists ? (
+          <Image
+            source={{ uri: `file://${item.thumbnailPath}` }}
+            style={styles.thumbnailImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.thumbnailPlaceholder}>
+            <Icon name="image" size={48} color="rgba(255,255,255,0.3)" />
+          </View>
+        )}
+      </View>
+      <View style={styles.cardInfo}>
+        <Text style={styles.artworkName} numberOfLines={1}>
+          {item.name}
+        </Text>
+        <Text style={styles.artworkMeta}>
+          {item.width}×{item.height} • {item.layerCount} layers
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+};
 
 export const GalleryScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
@@ -50,6 +99,13 @@ export const GalleryScreen: React.FC = () => {
 
     initializeApp();
   }, []);
+
+  // Reload artworks when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadArtworks();
+    }, [])
+  );
 
   const checkFirstLaunch = async () => {
     // Check if this is first launch and show tutorial
@@ -186,33 +242,7 @@ export const GalleryScreen: React.FC = () => {
   ];
 
   const renderArtworkCard = ({ item }: { item: ArtworkMetadata }) => (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => handleArtworkPress(item.id)}
-      activeOpacity={0.8}
-    >
-      <View style={styles.thumbnail}>
-        {item.thumbnailPath ? (
-          <Image
-            source={{ uri: `file://${item.thumbnailPath}` }}
-            style={styles.thumbnailImage}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={styles.thumbnailPlaceholder}>
-            <Icon name="image" size={48} color="rgba(255,255,255,0.3)" />
-          </View>
-        )}
-      </View>
-      <View style={styles.cardInfo}>
-        <Text style={styles.artworkName} numberOfLines={1}>
-          {item.name}
-        </Text>
-        <Text style={styles.artworkMeta}>
-          {item.width}×{item.height} • {item.layerCount} layers
-        </Text>
-      </View>
-    </TouchableOpacity>
+    <ArtworkCard item={item} onPress={handleArtworkPress} />
   );
 
   const renderEmptyState = () => (

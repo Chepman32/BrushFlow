@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
 import { Artwork, ArtworkMetadata, Layer } from '../types/artwork';
+import { Skia } from '@shopify/react-native-skia';
 
 const ARTWORKS_DIR = `${RNFS.DocumentDirectoryPath}/Artworks`;
 const THUMBNAILS_DIR = `${RNFS.DocumentDirectoryPath}/Thumbnails`;
@@ -42,8 +43,9 @@ export class FileManager {
     }
   }
 
-  async saveArtwork(artwork: Artwork): Promise<string> {
-    const filePath = `${ARTWORKS_DIR}/${artwork.id}.bflow`;
+  async saveArtwork(artwork: Artwork, customFilename?: string): Promise<string> {
+    const filename = customFilename || `${artwork.id}.bflow`;
+    const filePath = `${ARTWORKS_DIR}/${filename}`;
 
     // Serialize artwork to JSON (simplified version of .bflow format)
     const serializableArtwork = this.prepareArtworkForSerialization(artwork);
@@ -121,14 +123,80 @@ export class FileManager {
   async generateThumbnail(artwork: Artwork): Promise<string> {
     const thumbnailPath = `${THUMBNAILS_DIR}/thumb-${artwork.id}.jpg`;
 
-    // TODO: Implement actual thumbnail generation using Skia
-    // For now, we'll just create a placeholder
-    // In a real implementation, this would:
-    // 1. Composite all visible layers
-    // 2. Scale down to 512x512
-    // 3. Save as JPEG at 80% quality
+    try {
+      // Create a thumbnail surface (512x512 or proportional)
+      const thumbnailSize = 512;
+      const aspectRatio = artwork.width / artwork.height;
+      let thumbWidth = thumbnailSize;
+      let thumbHeight = thumbnailSize;
 
-    return thumbnailPath;
+      if (aspectRatio > 1) {
+        thumbHeight = thumbnailSize / aspectRatio;
+      } else {
+        thumbWidth = thumbnailSize * aspectRatio;
+      }
+
+      const surface = Skia.Surface.Make(Math.round(thumbWidth), Math.round(thumbHeight));
+
+      if (!surface) {
+        console.error('Failed to create thumbnail surface');
+        return thumbnailPath;
+      }
+
+      const canvas = surface.getCanvas();
+      const scaleX = thumbWidth / artwork.width;
+      const scaleY = thumbHeight / artwork.height;
+
+      // Scale the canvas to fit the thumbnail size
+      canvas.scale(scaleX, scaleY);
+
+      // Draw background
+      const bgPaint = Skia.Paint();
+      bgPaint.setColor(Skia.Color(artwork.backgroundColor || '#FFFFFF'));
+      canvas.drawRect(
+        Skia.XYWHRect(0, 0, artwork.width, artwork.height),
+        bgPaint
+      );
+
+      // Draw all visible layers with their strokes
+      for (const layer of artwork.layers) {
+        if (!layer.visible) continue;
+
+        const paint = Skia.Paint();
+        paint.setStyle(Skia.PaintStyle.Stroke);
+        paint.setAntiAlias(true);
+
+        // Draw each stroke in the layer
+        if (layer.strokes) {
+          for (const stroke of layer.strokes) {
+            if (stroke.svgPath) {
+              const path = Skia.Path.MakeFromSVGString(stroke.svgPath);
+              if (path) {
+                paint.setColor(Skia.Color(stroke.color));
+                paint.setStrokeWidth(stroke.strokeWidth);
+                paint.setAlphaf(layer.opacity * stroke.opacity);
+                canvas.drawPath(path, paint);
+              }
+            }
+          }
+        }
+      }
+
+      // Get the image snapshot
+      const image = surface.makeImageSnapshot();
+
+      // Encode as JPEG at 80% quality
+      const imageData = image.encodeToBytes(Skia.ImageFormat.JPEG, 80);
+
+      // Convert to base64 and save
+      const base64Data = Buffer.from(imageData).toString('base64');
+      await RNFS.writeFile(thumbnailPath, base64Data, 'base64');
+
+      return thumbnailPath;
+    } catch (error) {
+      console.error('Thumbnail generation failed:', error);
+      return thumbnailPath;
+    }
   }
 
   async exportArtwork(

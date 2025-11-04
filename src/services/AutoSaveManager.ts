@@ -91,23 +91,37 @@ export class AutoSaveManager {
 
   private async performAutoSave(): Promise<boolean> {
     if (!this.currentArtwork || !this.isModified || this.isSaving) {
+      console.log('⏭️  Skipping auto-save:', {
+        hasArtwork: !!this.currentArtwork,
+        isModified: this.isModified,
+        isSaving: this.isSaving,
+      });
       return false;
     }
 
+    console.log('💾 Starting auto-save for artwork:', this.currentArtwork.id);
     this.isSaving = true;
+
+    // Notify that saving is starting
+    if (this.onSaveCallback) {
+      // We can use a special indicator by checking isSaving state
+    }
 
     try {
       const fileManager = FileManager.getInstance();
 
       // Save to temporary file first (atomic operation)
-      const tempPath = `${this.currentArtwork.id}_temp`;
+      const tempPath = `${this.currentArtwork.id}_temp.bflow`;
       await fileManager.saveArtwork(this.currentArtwork, tempPath);
+      console.log('📄 Saved temporary file');
 
       // Rename to final filename
       await fileManager.saveArtwork(this.currentArtwork);
+      console.log('📄 Saved final file');
 
       // Generate thumbnail
       await fileManager.generateThumbnail(this.currentArtwork);
+      console.log('🖼️  Generated thumbnail');
 
       this.markAsSaved();
 
@@ -120,9 +134,10 @@ export class AutoSaveManager {
         this.onSaveCallback(true);
       }
 
+      console.log('✅ Auto-save completed successfully');
       return true;
     } catch (error) {
-      console.error('Auto-save failed:', error);
+      console.error('❌ Auto-save failed:', error);
 
       if (this.onSaveCallback) {
         this.onSaveCallback(false);

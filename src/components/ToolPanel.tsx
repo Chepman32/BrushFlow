@@ -54,7 +54,7 @@ const TOOLS: Array<{
 ];
 
 const MINIMIZED_HEIGHT = 56;
-const EXPANDED_HEIGHT = 320;
+const EXPANDED_HEIGHT = 380;
 
 export const ToolPanel: React.FC<ToolPanelProps> = ({
   selectedTool,
@@ -379,6 +379,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     gap: 12,
     marginBottom: 16,
+    marginTop: 12,
   },
   toolButton: {
     width: 64,

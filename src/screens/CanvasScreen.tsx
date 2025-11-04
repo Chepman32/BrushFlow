@@ -14,11 +14,11 @@ import {
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { RootStackParamList } from '../navigation/types';
 import { DrawingEngine } from '../engine/DrawingEngine';
 import { LayerManager } from '../engine/LayerManager';
-import { ToolController } from '../engine/ToolController';
 import { colors, spacing } from '../theme';
 import {
   ToolPanel,
@@ -31,6 +31,7 @@ import {
   HapticManager,
   AutoSaveManager,
   ExportManager,
+  FileManager,
 } from '../services';
 import { Tool, BrushSettings, Layer, Artwork, ExportOptions } from '../types';
 import Icon from 'react-native-vector-icons/Feather';
@@ -54,9 +55,11 @@ type CanvasLayer = Layer & {
 const createStrokeId = () =>
   `stroke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+type CanvasScreenRouteProp = RouteProp<RootStackParamList, 'Canvas'>;
+
 export const CanvasScreen: React.FC = () => {
   const navigation = useNavigation();
-  const route = useRoute();
+  const route = useRoute<CanvasScreenRouteProp>();
   const insets = useSafeAreaInsets();
 
   // Core state
@@ -86,48 +89,108 @@ export const CanvasScreen: React.FC = () => {
   const [selectedLayerId, setSelectedLayerId] = useState('1');
   const [currentStroke, setCurrentStroke] = useState<DrawnStroke | null>(null);
   const currentStrokeRef = useRef<DrawnStroke | null>(null);
+  const [artworkName, setArtworkName] = useState('Untitled Artwork');
 
   // UI state
   const [colorPickerVisible, setColorPickerVisible] = useState(false);
   const [layersPanelVisible, setLayersPanelVisible] = useState(false);
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Managers
   const drawingEngine = useRef(new DrawingEngine()).current;
   const layerManager = useRef(new LayerManager()).current;
-  const toolController = useRef(new ToolController()).current;
   const undoRedoManager = useRef(UndoRedoManager.getInstance()).current;
   const hapticManager = useRef(HapticManager.getInstance()).current;
   const autoSaveManager = useRef(AutoSaveManager.getInstance()).current;
   const exportManager = useRef(ExportManager.getInstance()).current;
+  const fileManager = useRef(FileManager.getInstance()).current;
 
   // Premium status (would come from IAP in real app)
   const [isPremiumUser] = useState(false);
 
+  // Load existing artwork if artworkId is provided
+  useEffect(() => {
+    const loadExistingArtwork = async () => {
+      const artworkId = route.params?.artworkId;
+      if (artworkId) {
+        try {
+          const loadedArtwork = await fileManager.loadArtwork(artworkId);
+          setArtworkName(loadedArtwork.name);
+
+          // Reconstruct Skia paths from SVG strings
+          const reconstructedLayers: CanvasLayer[] = loadedArtwork.layers.map(layer => ({
+            ...layer,
+            strokes: (layer.strokes || []).map(stroke => ({
+              ...stroke,
+              path: Skia.Path.MakeFromSVGString(stroke.svgPath) || Skia.Path.Make(),
+            })),
+          }));
+
+          setLayers(reconstructedLayers);
+          if (reconstructedLayers.length > 0) {
+            setSelectedLayerId(reconstructedLayers[0].id);
+          }
+        } catch (error) {
+          console.error('Failed to load artwork:', error);
+        }
+      }
+      setIsLoading(false);
+    };
+
+    loadExistingArtwork();
+  }, [route.params?.artworkId]);
+
   // Initialize auto-save
   useEffect(() => {
-    const artwork: Artwork = {
-      id: route.params?.artworkId || Date.now().toString(),
-      name: 'Untitled Artwork',
-      width: width,
-      height: height,
-      layers,
-      createdAt: new Date(),
-      modifiedAt: new Date(),
-    };
+    if (!isLoading) {
+      const artworkId = route.params?.artworkId || Date.now().toString();
+      const artwork: Artwork = {
+        id: artworkId,
+        name: artworkName,
+        width: width,
+        height: height,
+        layers,
+        createdAt: new Date(),
+        modifiedAt: new Date(),
+        backgroundColor: '#FFFFFF' as any,
+        thumbnailPath: '' as any,
+      } as unknown as Artwork;
 
-    autoSaveManager.start(artwork, success => {
-      setIsAutoSaving(false);
-      if (success) {
-        console.log('Auto-saved successfully');
-      }
-    });
+      autoSaveManager.start(artwork, success => {
+        setIsAutoSaving(false);
+        if (success) {
+          console.log('✅ Auto-saved successfully:', artworkId);
+        } else {
+          console.log('❌ Auto-save failed:', artworkId);
+        }
+      });
 
-    return () => {
-      autoSaveManager.stop();
-    };
-  }, []);
+      return () => {
+        autoSaveManager.stop();
+      };
+    }
+  }, [isLoading]);
+
+  // Keep AutoSaveManager in sync with latest layers
+  useEffect(() => {
+    if (!isLoading) {
+      const artwork: Artwork = {
+        id: route.params?.artworkId || 'temp',
+        name: artworkName,
+        width,
+        height,
+        layers,
+        createdAt: new Date(),
+        modifiedAt: new Date(),
+        backgroundColor: '#FFFFFF' as any,
+        thumbnailPath: '' as any,
+      } as unknown as Artwork;
+      autoSaveManager.updateArtwork(artwork);
+      console.log('📝 Artwork updated in AutoSaveManager, layers:', layers.length);
+    }
+  }, [layers, isLoading]);
 
   // Drawing gesture handlers
   const handleDrawStart = (x: number, y: number) => {
@@ -224,6 +287,7 @@ export const CanvasScreen: React.FC = () => {
         return updatedLayers;
       });
       autoSaveManager.markAsModified();
+      setIsAutoSaving(true); // Show saving indicator when modified
       hapticManager.strokeCommit();
     }
 
@@ -288,7 +352,6 @@ export const CanvasScreen: React.FC = () => {
 
   const handleToolSelect = (tool: Tool) => {
     setSelectedTool(tool);
-    toolController.setActiveTool(tool);
     hapticManager.toolSelection();
   };
 
@@ -362,7 +425,7 @@ export const CanvasScreen: React.FC = () => {
       strokes: layer.strokes.map(stroke => ({
         ...stroke,
         id: createStrokeId(),
-        path: stroke.path.copy(),
+        path: stroke.path?.copy() || Skia.Path.Make(),
       })),
     };
 
@@ -418,12 +481,14 @@ export const CanvasScreen: React.FC = () => {
   const handleExport = async (options: ExportOptions) => {
     const artwork: Artwork = {
       id: route.params?.artworkId || Date.now().toString(),
-      name: options.filename || 'Untitled Artwork',
+      name: options.filename || artworkName,
       width: width,
       height: height,
       layers,
       createdAt: new Date(),
       modifiedAt: new Date(),
+      backgroundColor: '#FFFFFF',
+      thumbnailPath: '',
     };
 
     try {
@@ -454,7 +519,7 @@ export const CanvasScreen: React.FC = () => {
         <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
           <Icon name="arrow-left" size={24} color={colors.text.dark} />
         </TouchableOpacity>
-        <Text style={styles.title}>Untitled Artwork</Text>
+        <Text style={styles.title}>{artworkName}</Text>
         <View style={styles.actions}>
           <TouchableOpacity
             onPress={handleUndo}
@@ -521,16 +586,19 @@ export const CanvasScreen: React.FC = () => {
                 return null;
               }
 
-              return layer.strokes.map(stroke => (
-                <Path
-                  key={stroke.id}
-                  path={stroke.path}
-                  color={stroke.color}
-                  style="stroke"
-                  strokeWidth={stroke.strokeWidth}
-                  opacity={layer.opacity * stroke.opacity}
-                />
-              ));
+              return layer.strokes.map(stroke => {
+                if (!stroke.path) return null;
+                return (
+                  <Path
+                    key={stroke.id}
+                    path={stroke.path}
+                    color={stroke.color}
+                    style="stroke"
+                    strokeWidth={stroke.strokeWidth}
+                    opacity={layer.opacity * stroke.opacity}
+                  />
+                );
+              });
             })}
 
             {/* Current stroke preview */}
