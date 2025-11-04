@@ -17,6 +17,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { colors, typography } from '../theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
 import { Layer, BlendMode } from '../types';
 import Slider from '@react-native-community/slider';
@@ -59,6 +60,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
   isPremiumUser,
   maxFreeLayers,
 }) => {
+  const insets = useSafeAreaInsets();
   const translateX = useSharedValue(PANEL_WIDTH);
   const backdropOpacity = useSharedValue(0);
 
@@ -121,7 +123,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
         </TouchableOpacity>
 
         <GestureDetector gesture={panGesture}>
-          <Animated.View style={[styles.panel, panelStyle]}>
+          <Animated.View
+            style={[
+              styles.panel,
+              panelStyle,
+              { paddingTop: Math.max(insets.top, 12) },
+            ]}
+          >
             {/* Header */}
             <View style={styles.header}>
               <Text style={styles.title}>Layers</Text>
