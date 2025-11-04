@@ -1,0 +1,10 @@
+export { SettingsManager } from './SettingsManager';
+export { FileManager } from './FileManager';
+export { IAPManager } from './IAPManager';
+export { DrawingEngine } from './DrawingEngine';
+export { LayerManager } from './LayerManager';
+export { GestureProcessor } from './GestureProcessor';
+export { UndoRedoManager } from './UndoRedoManager';
+export { HapticManager } from './HapticManager';
+export { AutoSaveManager } from './AutoSaveManager';
+export { ExportManager } from './ExportManager';
