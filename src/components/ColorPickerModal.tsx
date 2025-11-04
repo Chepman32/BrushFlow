@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   TextInput,
   Dimensions,
+  Pressable,
 } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -29,6 +30,8 @@ import Slider from '@react-native-community/slider';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const WHEEL_SIZE = 280;
 const MODAL_HEIGHT = SCREEN_HEIGHT * 0.7;
+const PRESET_COLORS = ['#000000', '#1F8AFE', '#32D583', '#F4CF3E', '#EF4444', '#FFFFFF'];
+type PickerTab = 'grid' | 'spectrum' | 'sliders';
 
 interface ColorPickerModalProps {
   visible: boolean;
@@ -146,6 +149,8 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
   const [saturation, setSaturation] = useState(hsv.s);
   const [value, setValue] = useState(hsv.v);
   const [hexInput, setHexInput] = useState(initialColor);
+  const [tab, setTab] = useState<PickerTab>('grid');
+  const [customSwatches, setCustomSwatches] = useState<string[]>([]);
 
   const translateY = useSharedValue(MODAL_HEIGHT);
   const backdropOpacity = useSharedValue(0);
@@ -173,6 +178,14 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     return rgbToHex(rgb.r, rgb.g, rgb.b);
   };
 
+  const applyLive = (hex: string) => {
+    setHexInput(hex);
+    // Push selection live to the canvas
+    try {
+      onColorSelect(hex);
+    } catch {}
+  };
+
   const handleHexChange = (text: string) => {
     setHexInput(text);
     if (/^#[0-9A-F]{6}$/i.test(text)) {
@@ -181,7 +194,66 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
       setHue(hsv.h);
       setSaturation(hsv.s);
       setValue(hsv.v);
+      applyLive(text);
     }
+  };
+
+  // Grid tab palette
+  const GRID_COLS = 12;
+  const GRID_ROWS = 7;
+  const gridColors = useMemo(() => {
+    const colors: string[][] = [];
+    for (let r = 0; r < GRID_ROWS; r++) {
+      const v = 1 - r / (GRID_ROWS - 1);
+      const row: string[] = [];
+      for (let c = 0; c < GRID_COLS; c++) {
+        const h = (c / GRID_COLS) * 360;
+        const s = 0.85;
+        const { r: rr, g: gg, b: bb } = hsvToRgb(h, s, v);
+        row.push(rgbToHex(rr, gg, bb));
+      }
+      colors.push(row);
+    }
+    return colors;
+  }, []);
+
+  const handleGridPick = (color: string) => {
+    const { r, g, b } = hexToRgb(color);
+    const { h, s, v } = rgbToHsv(r, g, b);
+    setHue(h);
+    setSaturation(s);
+    setValue(v);
+    applyLive(color);
+  };
+
+  // Spectrum gesture: H by X position, S by Y position
+  const spectrumGesture = Gesture.Pan()
+    .onBegin(e => {
+      const width = SCREEN_WIDTH - 64;
+      const x = Math.max(0, Math.min(e.x, width));
+      const y = Math.max(0, Math.min(e.y, 180));
+      const newHue = (x / width) * 360;
+      const newSat = 1 - y / 180;
+      setHue(newHue);
+      setSaturation(Math.max(0, Math.min(1, newSat)));
+      const { r, g, b } = hsvToRgb(newHue, Math.max(0, Math.min(1, newSat)), value);
+      applyLive(rgbToHex(r, g, b));
+    })
+    .onUpdate(e => {
+      const width = SCREEN_WIDTH - 64;
+      const x = Math.max(0, Math.min(e.x, width));
+      const y = Math.max(0, Math.min(e.y, 180));
+      const newHue = (x / width) * 360;
+      const newSat = 1 - y / 180;
+      setHue(newHue);
+      setSaturation(Math.max(0, Math.min(1, newSat)));
+      const { r, g, b } = hsvToRgb(newHue, Math.max(0, Math.min(1, newSat)), value);
+      applyLive(rgbToHex(r, g, b));
+    });
+
+  const addCustomSwatch = () => {
+    const c = getCurrentColor();
+    setCustomSwatches(prev => (prev.includes(c) ? prev : [c, ...prev].slice(0, 8)));
   };
 
   const handleConfirm = () => {
@@ -234,6 +306,21 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
               </TouchableOpacity>
             </View>
 
+            {/* Segmented tabs */}
+            <View style={styles.tabs}>
+              {(['grid', 'spectrum', 'sliders'] as PickerTab[]).map(t => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.tab, tab === t && styles.tabActive]}
+                  onPress={() => setTab(t)}
+                >
+                  <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
+                    {t[0].toUpperCase() + t.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             {/* Color Preview */}
             <View style={styles.previewContainer}>
               <View
@@ -241,47 +328,92 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
               />
             </View>
 
-            {/* HSV Sliders */}
-            <View style={styles.slidersContainer}>
-              <View style={styles.sliderRow}>
-                <Text style={styles.sliderLabel}>Hue</Text>
-                <Slider
-                  style={styles.slider}
-                  minimumValue={0}
-                  maximumValue={360}
-                  value={hue}
-                  onValueChange={setHue}
-                  minimumTrackTintColor={colors.primary.blue}
-                  maximumTrackTintColor="rgba(0,0,0,0.1)"
-                />
+            {tab === 'grid' && (
+              <View style={styles.gridContainer}>
+                {gridColors.map((row, rIdx) => (
+                  <View key={rIdx} style={styles.gridRow}>
+                    {row.map((col, cIdx) => (
+                      <TouchableOpacity
+                        key={cIdx}
+                        style={[styles.gridSwatch, { backgroundColor: col }]}
+                        onPress={() => handleGridPick(col)}
+                      />
+                    ))}
+                  </View>
+                ))}
               </View>
+            )}
 
-              <View style={styles.sliderRow}>
-                <Text style={styles.sliderLabel}>Saturation</Text>
-                <Slider
-                  style={styles.slider}
-                  minimumValue={0}
-                  maximumValue={1}
-                  value={saturation}
-                  onValueChange={setSaturation}
-                  minimumTrackTintColor={colors.primary.blue}
-                  maximumTrackTintColor="rgba(0,0,0,0.1)"
-                />
+            {tab === 'spectrum' && (
+              <View>
+                <GestureDetector gesture={spectrumGesture}>
+                  <View style={styles.spectrumArea}>
+                    <Canvas style={StyleSheet.absoluteFill}>
+                      <Rect x={0} y={0} width={SCREEN_WIDTH - 64} height={180}>
+                        <LinearGradient
+                          start={vec(0, 0)}
+                          end={vec(SCREEN_WIDTH - 64, 0)}
+                          colors={['#FF0000','#FFFF00','#00FF00','#00FFFF','#0000FF','#FF00FF','#FF0000']}
+                        />
+                      </Rect>
+                    </Canvas>
+                  </View>
+                </GestureDetector>
+                <View style={[styles.sliderRow, { marginTop: 12 }]}>
+                  <Text style={styles.sliderLabel}>Brightness</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={0}
+                    maximumValue={1}
+                    value={value}
+                    onValueChange={setValue}
+                    minimumTrackTintColor={colors.primary.blue}
+                    maximumTrackTintColor="rgba(0,0,0,0.1)"
+                  />
+                </View>
               </View>
+            )}
 
-              <View style={styles.sliderRow}>
-                <Text style={styles.sliderLabel}>Brightness</Text>
-                <Slider
-                  style={styles.slider}
-                  minimumValue={0}
-                  maximumValue={1}
-                  value={value}
-                  onValueChange={setValue}
-                  minimumTrackTintColor={colors.primary.blue}
-                  maximumTrackTintColor="rgba(0,0,0,0.1)"
-                />
+            {tab === 'sliders' && (
+              <View style={styles.slidersContainer}>
+                <View style={styles.sliderRow}>
+                  <Text style={styles.sliderLabel}>Hue</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={0}
+                    maximumValue={360}
+                    value={hue}
+                    onValueChange={(v)=>{ setHue(v); const {r,g,b}=hsvToRgb(v,saturation,value); applyLive(rgbToHex(r,g,b)); }}
+                    minimumTrackTintColor={colors.primary.blue}
+                    maximumTrackTintColor="rgba(0,0,0,0.1)"
+                  />
+                </View>
+                <View style={styles.sliderRow}>
+                  <Text style={styles.sliderLabel}>Saturation</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={0}
+                    maximumValue={1}
+                    value={saturation}
+                    onValueChange={(v)=>{ setSaturation(v); const {r,g,b}=hsvToRgb(hue,v,value); applyLive(rgbToHex(r,g,b)); }}
+                    minimumTrackTintColor={colors.primary.blue}
+                    maximumTrackTintColor="rgba(0,0,0,0.1)"
+                  />
+                </View>
+                <View style={styles.sliderRow}>
+                  <Text style={styles.sliderLabel}>Brightness</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={0}
+                    maximumValue={1}
+                    value={value}
+                    onValueChange={(v)=>{ setValue(v); const {r,g,b}=hsvToRgb(hue,saturation,v); applyLive(rgbToHex(r,g,b)); }}
+                    minimumTrackTintColor={colors.primary.blue}
+                    maximumTrackTintColor="rgba(0,0,0,0.1)"
+                  />
+                </View>
               </View>
-            </View>
+            )}
 
             {/* RGB Values */}
             <View style={styles.rgbContainer}>
@@ -308,6 +440,19 @@ export const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
                 autoCapitalize="characters"
                 maxLength={7}
               />
+            </View>
+
+            {/* Presets */}
+            <View style={styles.presetsRow}>
+              {PRESET_COLORS.map(c => (
+                <TouchableOpacity key={c} style={[styles.presetSwatch, { backgroundColor: c }]} onPress={() => handleGridPick(c)} />
+              ))}
+              {customSwatches.map(c => (
+                <TouchableOpacity key={`custom-${c}`} style={[styles.presetSwatch, { backgroundColor: c }]} onPress={() => handleGridPick(c)} />
+              ))}
+              <TouchableOpacity style={[styles.presetSwatch, styles.addPreset]} onPress={addCustomSwatch}>
+                <Text style={styles.addPresetText}>＋</Text>
+              </TouchableOpacity>
             </View>
 
             {/* Confirm Button */}
@@ -339,6 +484,31 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     padding: 24,
+  },
+  tabs: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+  },
+  tab: {
+    flex: 1,
+    height: 36,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tabActive: {
+    backgroundColor: colors.text.light,
+  },
+  tabText: {
+    ...typography.callout,
+    color: 'rgba(0,0,0,0.6)',
+    fontWeight: '600',
+  },
+  tabTextActive: {
+    color: colors.text.dark,
   },
   dragHandle: {
     width: 36,
@@ -380,6 +550,27 @@ const styles = StyleSheet.create({
   slidersContainer: {
     gap: 16,
     marginBottom: 24,
+  },
+  gridContainer: {
+    gap: 6,
+    marginBottom: 16,
+  },
+  gridRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  gridSwatch: {
+    flex: 1,
+    height: 28,
+    borderRadius: 6,
+  },
+  spectrumArea: {
+    width: SCREEN_WIDTH - 64,
+    height: 180,
+    borderRadius: 12,
+    overflow: 'hidden',
+    alignSelf: 'center',
+    backgroundColor: '#fff',
   },
   sliderRow: {
     gap: 8,
@@ -423,6 +614,28 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 16,
     ...typography.body,
+    color: colors.text.dark,
+  },
+  presetsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  presetSwatch: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  addPreset: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addPresetText: {
+    ...typography.caption,
     color: colors.text.dark,
   },
   confirmButton: {

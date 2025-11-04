@@ -136,8 +136,16 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
   const selectedToolData = TOOLS.find(t => t.id === selectedTool);
 
   return (
-    <GestureDetector gesture={Gesture.Simultaneous(panGesture, dragGesture)}>
-      <Animated.View style={[styles.container, panelStyle]}>
+    <>
+      {isExpanded && (
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={() => setIsExpanded(false)}
+        />
+      )}
+      <GestureDetector gesture={Gesture.Simultaneous(panGesture, dragGesture)}>
+        <Animated.View style={[styles.container, panelStyle]}>
         {/* Minimized View */}
         {!isExpanded && (
           <TouchableOpacity
@@ -249,7 +257,11 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
 
               {/* Color Selector */}
               <View style={styles.colorRow}>
-                <View style={styles.brushPreview}>
+                <TouchableOpacity
+                  style={styles.brushPreview}
+                  onPress={onColorPress}
+                  activeOpacity={0.8}
+                >
                   <View
                     style={[
                       styles.brushPreviewCircle,
@@ -261,7 +273,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                       },
                     ]}
                   />
-                </View>
+                </TouchableOpacity>
 
                 <View style={styles.colorSelector}>
                   <TouchableOpacity
@@ -295,8 +307,9 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
             </View>
           </Animated.View>
         )}
-      </Animated.View>
-    </GestureDetector>
+        </Animated.View>
+      </GestureDetector>
+    </>
   );
 };
 
@@ -315,6 +328,13 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 8,
     overflow: 'hidden',
+    zIndex: 2,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    // Tiny alpha to ensure it captures touches while appearing transparent
+    backgroundColor: 'rgba(0,0,0,0.001)',
+    zIndex: 1,
   },
   minimizedContent: {
     flexDirection: 'row',
