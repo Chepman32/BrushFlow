@@ -13,6 +13,7 @@ import Animated, {
   withSpring,
   interpolate,
   Extrapolate,
+  runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { colors, typography } from '../theme';
@@ -107,9 +108,9 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
     })
     .onEnd(event => {
       if (isExpanded && event.translationY > 40) {
-        setIsExpanded(false);
+        runOnJS(setIsExpanded)(false);
       } else if (!isExpanded && event.translationY < -30) {
-        setIsExpanded(true);
+        runOnJS(setIsExpanded)(true);
       }
       translateY.value = withSpring(0);
     });

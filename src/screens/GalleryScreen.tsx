@@ -37,9 +37,18 @@ export const GalleryScreen: React.FC = () => {
   const iapManager = IAPManager.getInstance();
 
   useEffect(() => {
-    loadArtworks();
-    checkPremiumStatus();
-    checkFirstLaunch();
+    const initializeApp = async () => {
+      // Initialize FileManager to create directories
+      const fileManager = FileManager.getInstance();
+      await fileManager.initialize();
+
+      // Then load artworks
+      await loadArtworks();
+      await checkPremiumStatus();
+      await checkFirstLaunch();
+    };
+
+    initializeApp();
   }, []);
 
   const checkFirstLaunch = async () => {

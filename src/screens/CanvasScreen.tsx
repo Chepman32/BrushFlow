@@ -12,6 +12,7 @@ import {
   GestureDetector,
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { DrawingEngine } from '../engine/DrawingEngine';
 import { LayerManager } from '../engine/LayerManager';
@@ -103,39 +104,53 @@ export const CanvasScreen: React.FC = () => {
     };
   }, []);
 
-  // Drawing gesture
+  // Drawing gesture handlers
+  const handleDrawStart = (x: number, y: number) => {
+    if (selectedTool === 'brush' || selectedTool === 'pencil') {
+      drawingEngine.startStroke(
+        { x, y },
+        primaryColor,
+        brushSettings.size,
+        brushSettings.opacity,
+      );
+    }
+  };
+
+  const handleDrawUpdate = (x: number, y: number) => {
+    if (selectedTool === 'brush' || selectedTool === 'pencil') {
+      drawingEngine.addStrokePoint({ x, y });
+      setPaths([...paths]);
+    }
+  };
+
+  const handleDrawEnd = () => {
+    if (selectedTool === 'brush' || selectedTool === 'pencil') {
+      const stroke = drawingEngine.endStroke();
+      if (stroke) {
+        setPaths([...paths, drawingEngine.getCurrentPath()]);
+        undoRedoManager.saveState(layers);
+        autoSaveManager.markAsModified();
+        hapticManager.strokeCommit();
+      }
+    }
+  };
+
+  // Drawing gesture with runOnJS
   const panGesture = Gesture.Pan()
     .onStart(event => {
-      if (selectedTool === 'brush' || selectedTool === 'pencil') {
-        drawingEngine.startStroke(
-          { x: event.x, y: event.y },
-          primaryColor,
-          brushSettings.size,
-          brushSettings.opacity,
-        );
-      }
+      runOnJS(handleDrawStart)(event.x, event.y);
     })
     .onUpdate(event => {
-      if (selectedTool === 'brush' || selectedTool === 'pencil') {
-        drawingEngine.addStrokePoint({ x: event.x, y: event.y });
-        setPaths([...paths]);
-      }
+      runOnJS(handleDrawUpdate)(event.x, event.y);
     })
     .onEnd(() => {
-      if (selectedTool === 'brush' || selectedTool === 'pencil') {
-        const stroke = drawingEngine.endStroke();
-        if (stroke) {
-          setPaths([...paths, drawingEngine.getCurrentPath()]);
-          undoRedoManager.saveState(layers);
-          autoSaveManager.markAsModified();
-          hapticManager.strokeCommit();
-        }
-      }
+      runOnJS(handleDrawEnd)();
     });
 
   // Three-finger gestures for undo/redo
   const threeFingerGesture = Gesture.Pan()
-    .numberOfPointers(3)
+    .minPointers(3)
+    .maxPointers(3)
     .onEnd(event => {
       if (event.translationY > 60) {
         handleUndo();
