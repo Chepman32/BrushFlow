@@ -55,6 +55,9 @@ type CanvasLayer = Layer & {
 const createStrokeId = () =>
   `stroke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+const createArtworkId = () =>
+  `art-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 type CanvasScreenRouteProp = RouteProp<RootStackParamList, 'Canvas'>;
 
 export const CanvasScreen: React.FC = () => {
@@ -90,6 +93,23 @@ export const CanvasScreen: React.FC = () => {
   const [currentStroke, setCurrentStroke] = useState<DrawnStroke | null>(null);
   const currentStrokeRef = useRef<DrawnStroke | null>(null);
   const [artworkName, setArtworkName] = useState('Untitled Artwork');
+  const artworkIdRef = useRef(route.params?.artworkId || createArtworkId());
+  const hasExistingFileRef = useRef<boolean>(Boolean(route.params?.artworkId));
+  const [artworkCreatedAt, setArtworkCreatedAt] = useState(new Date());
+  const hasSyncedInitialArtworkRef = useRef(false);
+
+  const buildArtworkPayload = (latestLayers?: CanvasLayer[]): Artwork =>
+    ({
+      id: artworkIdRef.current,
+      name: artworkName,
+      width,
+      height,
+      layers: latestLayers ?? layers,
+      createdAt: artworkCreatedAt,
+      modifiedAt: new Date(),
+      backgroundColor: '#FFFFFF' as any,
+      thumbnailPath: '' as any,
+    } as unknown as Artwork);
 
   // UI state
   const [colorPickerVisible, setColorPickerVisible] = useState(false);
@@ -118,6 +138,9 @@ export const CanvasScreen: React.FC = () => {
         try {
           const loadedArtwork = await fileManager.loadArtwork(artworkId);
           setArtworkName(loadedArtwork.name);
+          artworkIdRef.current = loadedArtwork.id;
+          hasExistingFileRef.current = true;
+          setArtworkCreatedAt(loadedArtwork.createdAt);
 
           // Reconstruct Skia paths from SVG strings
           const reconstructedLayers: CanvasLayer[] = loadedArtwork.layers.map(layer => ({
@@ -145,27 +168,20 @@ export const CanvasScreen: React.FC = () => {
   // Initialize auto-save
   useEffect(() => {
     if (!isLoading) {
-      const artworkId = route.params?.artworkId || Date.now().toString();
-      const artwork: Artwork = {
-        id: artworkId,
-        name: artworkName,
-        width: width,
-        height: height,
-        layers,
-        createdAt: new Date(),
-        modifiedAt: new Date(),
-        backgroundColor: '#FFFFFF' as any,
-        thumbnailPath: '' as any,
-      } as unknown as Artwork;
+      const artwork = buildArtworkPayload();
 
-      autoSaveManager.start(artwork, success => {
-        setIsAutoSaving(false);
-        if (success) {
-          console.log('✅ Auto-saved successfully:', artworkId);
-        } else {
-          console.log('❌ Auto-save failed:', artworkId);
-        }
-      });
+      autoSaveManager.start(
+        artwork,
+        success => {
+          setIsAutoSaving(false);
+          if (success) {
+            console.log('✅ Auto-saved successfully:', artworkIdRef.current);
+          } else {
+            console.log('❌ Auto-save failed:', artworkIdRef.current);
+          }
+        },
+        { hasExistingFile: hasExistingFileRef.current },
+      );
 
       return () => {
         autoSaveManager.stop();
@@ -176,21 +192,19 @@ export const CanvasScreen: React.FC = () => {
   // Keep AutoSaveManager in sync with latest layers
   useEffect(() => {
     if (!isLoading) {
-      const artwork: Artwork = {
-        id: route.params?.artworkId || 'temp',
-        name: artworkName,
-        width,
-        height,
-        layers,
-        createdAt: new Date(),
-        modifiedAt: new Date(),
-        backgroundColor: '#FFFFFF' as any,
-        thumbnailPath: '' as any,
-      } as unknown as Artwork;
+      const artwork = buildArtworkPayload();
       autoSaveManager.updateArtwork(artwork);
+
+      if (hasSyncedInitialArtworkRef.current) {
+        autoSaveManager.markAsModified();
+        setIsAutoSaving(true);
+      } else {
+        hasSyncedInitialArtworkRef.current = true;
+      }
+
       console.log('📝 Artwork updated in AutoSaveManager, layers:', layers.length);
     }
-  }, [layers, isLoading]);
+  }, [layers, artworkName, artworkCreatedAt, isLoading]);
 
   // Drawing gesture handlers
   const handleDrawStart = (x: number, y: number) => {
@@ -479,20 +493,14 @@ export const CanvasScreen: React.FC = () => {
 
   // Export
   const handleExport = async (options: ExportOptions) => {
-    const artwork: Artwork = {
-      id: route.params?.artworkId || Date.now().toString(),
+    const exportArtwork: Artwork = {
+      ...buildArtworkPayload(),
       name: options.filename || artworkName,
-      width: width,
-      height: height,
-      layers,
-      createdAt: new Date(),
       modifiedAt: new Date(),
-      backgroundColor: '#FFFFFF',
-      thumbnailPath: '',
     };
 
     try {
-      const filePath = await exportManager.exportArtwork(artwork, options);
+      const filePath = await exportManager.exportArtwork(exportArtwork, options);
       console.log('Exported to:', filePath);
 
       // Optionally share

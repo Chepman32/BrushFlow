@@ -8,6 +8,11 @@ import {
   Dimensions,
   Image,
   RefreshControl,
+  Modal,
+  TextInput,
+  Platform,
+  ActionSheetIOS,
+  Alert,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { DrawerNavigationProp } from '@react-navigation/drawer';
@@ -30,7 +35,8 @@ type NavigationProp = DrawerNavigationProp<DrawerParamList, 'Gallery'>;
 const ArtworkCard: React.FC<{
   item: ArtworkMetadata;
   onPress: (id: string) => void;
-}> = ({ item, onPress }) => {
+  onMorePress: (item: ArtworkMetadata) => void;
+}> = ({ item, onPress, onMorePress }) => {
   const [thumbnailExists, setThumbnailExists] = useState(false);
   const [previewData, setPreviewData] = useState<{
     width: number;
@@ -184,6 +190,13 @@ const ArtworkCard: React.FC<{
       onPress={() => onPress(item.id)}
       activeOpacity={0.8}
     >
+      <TouchableOpacity
+        style={styles.moreButton}
+        onPress={() => onMorePress(item)}
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      >
+        <Icon name="more-horizontal" size={20} color="rgba(255,255,255,0.7)" />
+      </TouchableOpacity>
       <View style={styles.thumbnail}>{renderPreview()}</View>
       <View style={styles.cardInfo}>
         <Text style={styles.artworkName} numberOfLines={1}>
@@ -206,6 +219,9 @@ export const GalleryScreen: React.FC = () => {
   const [premiumModalVisible, setPremiumModalVisible] = useState(false);
   const [tutorialVisible, setTutorialVisible] = useState(false);
   const [isPremiumUser, setIsPremiumUser] = useState(false);
+  const [selectedArtwork, setSelectedArtwork] = useState<ArtworkMetadata | null>(null);
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
 
   const hapticManager = HapticManager.getInstance();
   const iapManager = IAPManager.getInstance();
@@ -301,6 +317,110 @@ export const GalleryScreen: React.FC = () => {
     }
   };
 
+  const openRenameDialog = (artwork: ArtworkMetadata) => {
+    setSelectedArtwork(artwork);
+    setRenameValue(artwork.name);
+    setRenameModalVisible(true);
+  };
+
+  const closeRenameDialog = () => {
+    setRenameModalVisible(false);
+    setRenameValue('');
+    setSelectedArtwork(null);
+  };
+
+  const handleRenameSubmit = async () => {
+    if (!selectedArtwork) {
+      return;
+    }
+
+    const trimmed = renameValue.trim();
+    if (trimmed.length === 0) {
+      Alert.alert('Name required', 'Please enter a name for your artwork.');
+      return;
+    }
+
+    if (trimmed === selectedArtwork.name) {
+      closeRenameDialog();
+      return;
+    }
+
+    try {
+      const fileManager = FileManager.getInstance();
+      await fileManager.renameArtwork(selectedArtwork.id, trimmed);
+      closeRenameDialog();
+      await loadArtworks();
+      hapticManager.trigger('success');
+    } catch (error) {
+      console.error('Failed to rename artwork:', error);
+      Alert.alert('Rename failed', 'Something went wrong while renaming. Please try again.');
+    }
+  };
+
+  const performDeleteArtwork = async (artwork: ArtworkMetadata) => {
+    try {
+      const fileManager = FileManager.getInstance();
+      await fileManager.deleteArtwork(artwork.id);
+      await loadArtworks();
+      hapticManager.trigger('success');
+    } catch (error) {
+      console.error('Failed to delete artwork:', error);
+      Alert.alert('Delete failed', 'Unable to delete the artwork. Please try again.');
+    }
+  };
+
+  const confirmDeleteArtwork = (artwork: ArtworkMetadata) => {
+    Alert.alert(
+      'Delete Artwork',
+      `Are you sure you want to delete "${artwork.name}"? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => performDeleteArtwork(artwork),
+        },
+      ],
+    );
+  };
+
+  const handleMoreOptions = (artwork: ArtworkMetadata) => {
+    hapticManager.buttonPress();
+
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: artwork.name,
+          options: ['Cancel', 'Rename', 'Delete'],
+          cancelButtonIndex: 0,
+          destructiveButtonIndex: 2,
+          userInterfaceStyle: 'dark',
+        },
+        buttonIndex => {
+          if (buttonIndex === 1) {
+            openRenameDialog(artwork);
+          } else if (buttonIndex === 2) {
+            confirmDeleteArtwork(artwork);
+          }
+        },
+      );
+      return;
+    }
+
+    Alert.alert(artwork.name, undefined, [
+      {
+        text: 'Rename',
+        onPress: () => openRenameDialog(artwork),
+      },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => confirmDeleteArtwork(artwork),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const menuItems = [
     {
       id: 'gallery',
@@ -367,7 +487,11 @@ export const GalleryScreen: React.FC = () => {
   ];
 
   const renderArtworkCard = ({ item }: { item: ArtworkMetadata }) => (
-    <ArtworkCard item={item} onPress={handleArtworkPress} />
+    <ArtworkCard
+      item={item}
+      onPress={handleArtworkPress}
+      onMorePress={handleMoreOptions}
+    />
   );
 
   const renderEmptyState = () => (
@@ -446,6 +570,43 @@ export const GalleryScreen: React.FC = () => {
           onSkip={() => setTutorialVisible(false)}
         />
       )}
+
+      <Modal
+        visible={renameModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeRenameDialog}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.renameModal}>
+            <Text style={styles.renameTitle}>Rename Artwork</Text>
+            <TextInput
+              value={renameValue}
+              onChangeText={setRenameValue}
+              placeholder="Artwork name"
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              style={styles.renameInput}
+              autoFocus
+            />
+            <View style={styles.renameActions}>
+              <TouchableOpacity
+                style={[styles.renameButton, { marginRight: spacing.sm }]}
+                onPress={closeRenameDialog}
+              >
+                <Text style={styles.renameButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.renameButton, styles.renameButtonPrimary]}
+                onPress={handleRenameSubmit}
+              >
+                <Text style={[styles.renameButtonText, styles.renameButtonPrimaryText]}>
+                  Save
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -493,6 +654,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 12,
     elevation: 4,
+  },
+  moreButton: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    zIndex: 2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   thumbnail: {
     width: '100%',
@@ -562,5 +735,55 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 24,
     elevation: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  renameModal: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 20,
+    padding: spacing.lg,
+    backgroundColor: colors.surface.dark,
+  },
+  renameTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text.light,
+    marginBottom: spacing.md,
+  },
+  renameInput: {
+    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    color: colors.text.light,
+    fontSize: 16,
+    marginBottom: spacing.lg,
+  },
+  renameActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  renameButton: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  renameButtonPrimary: {
+    backgroundColor: colors.primary.blue,
+  },
+  renameButtonText: {
+    color: colors.text.light,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  renameButtonPrimaryText: {
+    color: '#ffffff',
   },
 });

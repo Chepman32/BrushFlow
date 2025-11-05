@@ -11,6 +11,7 @@ export class AutoSaveManager {
   private currentArtwork: Artwork | null = null;
   private isSaving: boolean = false;
   private onSaveCallback?: (success: boolean) => void;
+  private hasSavedOnce: boolean = false;
 
   private constructor() {
     this.loadSettings();
@@ -50,9 +51,15 @@ export class AutoSaveManager {
     }
   }
 
-  start(artwork: Artwork, onSave?: (success: boolean) => void): void {
+  start(
+    artwork: Artwork,
+    onSave?: (success: boolean) => void,
+    options?: { hasExistingFile?: boolean },
+  ): void {
     this.currentArtwork = artwork;
     this.onSaveCallback = onSave;
+    this.hasSavedOnce = options?.hasExistingFile ?? false;
+    this.isModified = false;
 
     if (this.interval === 0) {
       return; // Auto-save disabled
@@ -82,7 +89,6 @@ export class AutoSaveManager {
 
   updateArtwork(artwork: Artwork): void {
     this.currentArtwork = artwork;
-    this.markAsModified();
   }
 
   async forceSave(): Promise<boolean> {
@@ -110,20 +116,43 @@ export class AutoSaveManager {
     try {
       const fileManager = FileManager.getInstance();
 
+      const hasContent = this.currentArtwork.layers.some(layer => {
+        const strokeCount = layer.strokes?.length ?? 0;
+        const hasBitmap = !!layer.bitmapData;
+        return strokeCount > 0 || hasBitmap;
+      });
+
+      if (!hasContent && !this.hasSavedOnce) {
+        console.log('🛑 Skipping auto-save for empty artwork');
+        this.markAsSaved();
+        if (this.onSaveCallback) {
+          this.onSaveCallback(false);
+        }
+        return false;
+      }
+
+      // Update modified timestamp before saving
+      this.currentArtwork.modifiedAt = new Date();
+
       // Save to temporary file first (atomic operation)
       const tempPath = `${this.currentArtwork.id}_temp.bflow`;
-      await fileManager.saveArtwork(this.currentArtwork, tempPath);
+      const tempFilePath = await fileManager.saveArtwork(this.currentArtwork, tempPath);
       console.log('📄 Saved temporary file');
 
       // Rename to final filename
       await fileManager.saveArtwork(this.currentArtwork);
       console.log('📄 Saved final file');
 
+      // Clean up temporary file
+      await fileManager.removeTemporaryArtworkFile(this.currentArtwork.id, tempFilePath);
+      console.log('🧹 Removed temporary file');
+
       // Generate thumbnail
       await fileManager.generateThumbnail(this.currentArtwork);
       console.log('🖼️  Generated thumbnail');
 
       this.markAsSaved();
+      this.hasSavedOnce = true;
 
       // Trigger haptic feedback
       const hapticManager = HapticManager.getInstance();

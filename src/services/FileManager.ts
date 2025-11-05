@@ -60,7 +60,11 @@ export class FileManager {
   }
 
   async loadArtwork(id: string): Promise<Artwork> {
-    const filePath = `${ARTWORKS_DIR}/${id}.bflow`;
+    const filePath = await this.resolveArtworkFilePath(id);
+    if (!filePath) {
+      throw new Error('Artwork not found');
+    }
+
     const data = await RNFS.readFile(filePath, 'utf8');
     const parsed = JSON.parse(data);
 
@@ -72,14 +76,14 @@ export class FileManager {
   }
 
   async deleteArtwork(id: string): Promise<void> {
-    const artworkPath = `${ARTWORKS_DIR}/${id}.bflow`;
+    const artworkPath = await this.resolveArtworkFilePath(id);
+    if (!artworkPath) {
+      throw new Error('Artwork not found');
+    }
     const thumbnailPath = `${THUMBNAILS_DIR}/thumb-${id}.jpg`;
 
     // Delete artwork file
-    const artworkExists = await RNFS.exists(artworkPath);
-    if (artworkExists) {
-      await RNFS.unlink(artworkPath);
-    }
+    await RNFS.unlink(artworkPath);
 
     // Delete thumbnail
     const thumbnailExists = await RNFS.exists(thumbnailPath);
@@ -88,9 +92,28 @@ export class FileManager {
     }
   }
 
+  async renameArtwork(id: string, newName: string): Promise<void> {
+    const artworkPath = await this.resolveArtworkFilePath(id);
+    if (!artworkPath) {
+      throw new Error('Artwork not found');
+    }
+
+    const data = await RNFS.readFile(artworkPath, 'utf8');
+    const artwork = JSON.parse(data);
+
+    artwork.name = newName;
+    artwork.modifiedAt = new Date().toISOString();
+
+    await RNFS.writeFile(artworkPath, JSON.stringify(artwork), 'utf8');
+  }
+
   async listArtworks(): Promise<ArtworkMetadata[]> {
     const files = await RNFS.readDir(ARTWORKS_DIR);
-    const artworkFiles = files.filter(file => file.name.endsWith('.bflow'));
+    const artworkFiles = files.filter(
+      file =>
+        file.name.endsWith('.bflow') &&
+        !file.name.endsWith('_temp.bflow'),
+    );
 
     const metadataList: ArtworkMetadata[] = [];
 
@@ -268,6 +291,47 @@ export class FileManager {
       if (file.mtime && file.mtime.getTime() < thirtyDaysAgo) {
         await RNFS.unlink(file.path);
       }
+    }
+  }
+
+  private async resolveArtworkFilePath(id: string): Promise<string | null> {
+    const directPath = `${ARTWORKS_DIR}/${id}.bflow`;
+    if (await RNFS.exists(directPath)) {
+      return directPath;
+    }
+
+    try {
+      const files = await RNFS.readDir(ARTWORKS_DIR);
+      for (const file of files) {
+        if (!file.isFile() || !file.name.endsWith('.bflow')) {
+          continue;
+        }
+        try {
+          const data = await RNFS.readFile(file.path, 'utf8');
+          const parsed = JSON.parse(data);
+          if (parsed.id === id) {
+            return file.path;
+          }
+        } catch (error) {
+          console.warn('Failed to inspect artwork file during lookup:', file.name, error);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to scan artwork directory:', error);
+    }
+
+    return null;
+  }
+
+  async removeTemporaryArtworkFile(id: string, fallbackPath?: string): Promise<void> {
+    const tempPath = fallbackPath ?? `${ARTWORKS_DIR}/${id}_temp.bflow`;
+    try {
+      const exists = await RNFS.exists(tempPath);
+      if (exists) {
+        await RNFS.unlink(tempPath);
+      }
+    } catch (error) {
+      console.warn('Failed to remove temporary artwork file:', tempPath, error);
     }
   }
 }
