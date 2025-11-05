@@ -1,6 +1,6 @@
 import RNFS from 'react-native-fs';
 import { Artwork, ArtworkMetadata, Layer } from '../types/artwork';
-import { Skia } from '@shopify/react-native-skia';
+import { PaintStyle, Skia } from '@shopify/react-native-skia';
 
 const ARTWORKS_DIR = `${RNFS.DocumentDirectoryPath}/Artworks`;
 const THUMBNAILS_DIR = `${RNFS.DocumentDirectoryPath}/Thumbnails`;
@@ -163,7 +163,7 @@ export class FileManager {
         if (!layer.visible) continue;
 
         const paint = Skia.Paint();
-        paint.setStyle(Skia.PaintStyle.Stroke);
+        paint.setStyle(PaintStyle.Stroke);
         paint.setAntiAlias(true);
 
         // Draw each stroke in the layer
