@@ -17,6 +17,8 @@ import { ArtworkMetadata } from '../types';
 import { colors, typography, spacing } from '../theme';
 import { SideMenu, PremiumModal, TutorialCarousel } from '../components';
 import Icon from 'react-native-vector-icons/Feather';
+import { Canvas, FitBox, Group, Path, Rect, Skia } from '@shopify/react-native-skia';
+import type { SkPath } from '@shopify/react-native-skia';
 import RNFS from 'react-native-fs';
 
 const { width } = Dimensions.get('window');
@@ -30,6 +32,23 @@ const ArtworkCard: React.FC<{
   onPress: (id: string) => void;
 }> = ({ item, onPress }) => {
   const [thumbnailExists, setThumbnailExists] = useState(false);
+  const [previewData, setPreviewData] = useState<{
+    width: number;
+    height: number;
+    backgroundColor: string;
+    layers: {
+      id: string;
+      opacity: number;
+      visible: boolean;
+      strokes: {
+        id: string;
+        path: SkPath;
+        color: string;
+        strokeWidth: number;
+        opacity: number;
+      }[];
+    }[];
+  } | null>(null);
 
   useEffect(() => {
     const checkThumbnail = async () => {
@@ -41,25 +60,131 @@ const ArtworkCard: React.FC<{
     checkThumbnail();
   }, [item.thumbnailPath]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadPreview = async () => {
+      try {
+        const fileManager = FileManager.getInstance();
+        const artwork = await fileManager.loadArtwork(item.id);
+
+        if (!isMounted) {
+          return;
+        }
+
+        const preparedLayers = artwork.layers.map(layer => ({
+          id: layer.id,
+          opacity: layer.opacity,
+          visible: layer.visible,
+          strokes: (layer.strokes || [])
+            .map(stroke => {
+              if (!stroke.svgPath) {
+                return null;
+              }
+              const path = Skia.Path.MakeFromSVGString(stroke.svgPath);
+              if (!path) {
+                return null;
+              }
+              return {
+                id: stroke.id,
+                path,
+                color: stroke.color,
+                strokeWidth: stroke.strokeWidth,
+                opacity: stroke.opacity,
+              };
+            })
+            .filter(Boolean) as {
+            id: string;
+            path: SkPath;
+            color: string;
+            strokeWidth: number;
+            opacity: number;
+          }[],
+        }));
+
+        setPreviewData({
+          width: artwork.width,
+          height: artwork.height,
+          backgroundColor: artwork.backgroundColor || '#FFFFFF',
+          layers: preparedLayers,
+        });
+      } catch (error) {
+        console.error('Failed to load artwork preview:', error);
+        if (isMounted) {
+          setPreviewData(null);
+        }
+      }
+    };
+
+    setPreviewData(null);
+    loadPreview();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [item.id]);
+
+  const renderPreview = () => {
+    if (previewData) {
+      const srcRect = Skia.XYWHRect(0, 0, previewData.width, previewData.height);
+      const dstRect = Skia.XYWHRect(0, 0, CARD_WIDTH, CARD_WIDTH);
+
+      return (
+        <Canvas style={styles.thumbnailCanvas}>
+          <FitBox src={srcRect} dst={dstRect} fit="contain">
+            <Group>
+              <Rect
+                x={0}
+                y={0}
+                width={previewData.width}
+                height={previewData.height}
+                color={previewData.backgroundColor}
+              />
+              {previewData.layers.map(layer => {
+                if (!layer.visible) {
+                  return null;
+                }
+                return layer.strokes.map(stroke => (
+                  <Path
+                    key={`${layer.id}-${stroke.id}`}
+                    path={stroke.path}
+                    color={stroke.color}
+                    style="stroke"
+                    strokeWidth={stroke.strokeWidth}
+                    opacity={layer.opacity * stroke.opacity}
+                  />
+                ));
+              })}
+            </Group>
+          </FitBox>
+        </Canvas>
+      );
+    }
+
+    if (item.thumbnailPath && thumbnailExists) {
+      return (
+        <Image
+          source={{ uri: `file://${item.thumbnailPath}` }}
+          style={styles.thumbnailImage}
+          resizeMode="cover"
+        />
+      );
+    }
+
+    return (
+      <View style={styles.thumbnailPlaceholder}>
+        <Icon name="image" size={48} color="rgba(255,255,255,0.3)" />
+      </View>
+    );
+  };
+
   return (
     <TouchableOpacity
       style={styles.card}
       onPress={() => onPress(item.id)}
       activeOpacity={0.8}
     >
-      <View style={styles.thumbnail}>
-        {item.thumbnailPath && thumbnailExists ? (
-          <Image
-            source={{ uri: `file://${item.thumbnailPath}` }}
-            style={styles.thumbnailImage}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={styles.thumbnailPlaceholder}>
-            <Icon name="image" size={48} color="rgba(255,255,255,0.3)" />
-          </View>
-        )}
-      </View>
+      <View style={styles.thumbnail}>{renderPreview()}</View>
       <View style={styles.cardInfo}>
         <Text style={styles.artworkName} numberOfLines={1}>
           {item.name}
@@ -378,6 +503,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   thumbnailImage: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbnailCanvas: {
     width: '100%',
     height: '100%',
   },
