@@ -1,7 +1,7 @@
 import RNFS from 'react-native-fs';
 import { Buffer } from 'buffer';
 import { Artwork, ArtworkMetadata, Layer } from '../types/artwork';
-import { PaintStyle, Skia } from '@shopify/react-native-skia';
+import { PaintStyle, Skia, ImageFormat } from '@shopify/react-native-skia';
 
 const ARTWORKS_DIR = `${RNFS.DocumentDirectoryPath}/Artworks`;
 const THUMBNAILS_DIR = `${RNFS.DocumentDirectoryPath}/Thumbnails`;
@@ -223,10 +223,10 @@ export class FileManager {
       let base64Data: string;
       if (typeof image.encodeToBase64 === 'function') {
         try {
-          base64Data = image.encodeToBase64('jpeg', 80);
+          base64Data = image.encodeToBase64(ImageFormat.JPEG, 80);
         } catch (encodeError) {
           console.warn('JPEG encoding failed, falling back to PNG:', encodeError);
-          base64Data = image.encodeToBase64('png');
+          base64Data = image.encodeToBase64(ImageFormat.PNG);
         }
       } else {
         const bytes = image.encodeToBytes();

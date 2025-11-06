@@ -67,6 +67,7 @@ const ArtworkCard: React.FC<{
       }[];
     }[];
   } | null>(null);
+  const lastModified = useMemo(() => item.modifiedAt.getTime(), [item.modifiedAt]);
 
   useEffect(() => {
     const checkThumbnail = async () => {
@@ -76,7 +77,7 @@ const ArtworkCard: React.FC<{
       }
     };
     checkThumbnail();
-  }, [item.thumbnailPath]);
+  }, [item.thumbnailPath, lastModified]);
 
   useEffect(() => {
     let isMounted = true;
@@ -140,7 +141,14 @@ const ArtworkCard: React.FC<{
     return () => {
       isMounted = false;
     };
-  }, [item.id]);
+  }, [item.id, lastModified]);
+
+  const thumbnailUri = useMemo(() => {
+    if (!item.thumbnailPath) {
+      return '';
+    }
+    return `file://${item.thumbnailPath}?t=${lastModified}`;
+  }, [item.thumbnailPath, lastModified]);
 
   const renderPreview = () => {
     if (previewData) {
@@ -182,7 +190,8 @@ const ArtworkCard: React.FC<{
     if (item.thumbnailPath && thumbnailExists) {
       return (
         <Image
-          source={{ uri: `file://${item.thumbnailPath}` }}
+          key={lastModified}
+          source={{ uri: thumbnailUri }}
           style={styles.thumbnailImage}
           resizeMode="cover"
         />
