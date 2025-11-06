@@ -3,7 +3,6 @@ import {
   View,
   StyleSheet,
   TouchableOpacity,
-  Text,
   Dimensions,
   StatusBar,
   BackHandler,
@@ -603,7 +602,6 @@ export const CanvasScreen: React.FC = () => {
           <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
             <Icon name="arrow-left" size={24} color={palette.primaryText} />
           </TouchableOpacity>
-          <Text style={styles.title}>{artworkName}</Text>
           <View style={styles.actions}>
             <TouchableOpacity
               onPress={handleUndo}
@@ -650,12 +648,6 @@ export const CanvasScreen: React.FC = () => {
                     : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25)
                 }
               />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setLayersPanelVisible(true)}
-              style={styles.iconButton}
-            >
-              <Icon name="layers" size={24} color={palette.primaryText} />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setExportModalVisible(true)}
@@ -754,23 +746,25 @@ export const CanvasScreen: React.FC = () => {
       />
 
       {/* Layers Panel */}
-      <LayersPanel
-        visible={layersPanelVisible}
-        layers={layers}
-        selectedLayerId={selectedLayerId}
-        onClose={() => setLayersPanelVisible(false)}
-        onLayerSelect={setSelectedLayerId}
-        onLayerAdd={handleAddLayer}
-        onLayerDelete={handleDeleteLayer}
-        onLayerDuplicate={handleDuplicateLayer}
-        onLayerReorder={handleLayerReorder}
-        onLayerVisibilityToggle={handleLayerVisibilityToggle}
-        onLayerLockToggle={handleLayerLockToggle}
-        onLayerOpacityChange={handleLayerOpacityChange}
-        onLayerBlendModeChange={handleLayerBlendModeChange}
-        isPremiumUser={isPremiumUser}
-        maxFreeLayers={3}
-      />
+      {layersPanelVisible && !isFullscreen && (
+        <LayersPanel
+          visible={layersPanelVisible}
+          layers={layers}
+          selectedLayerId={selectedLayerId}
+          onClose={() => setLayersPanelVisible(false)}
+          onLayerSelect={setSelectedLayerId}
+          onLayerAdd={handleAddLayer}
+          onLayerDelete={handleDeleteLayer}
+          onLayerDuplicate={handleDuplicateLayer}
+          onLayerReorder={handleLayerReorder}
+          onLayerVisibilityToggle={handleLayerVisibilityToggle}
+          onLayerLockToggle={handleLayerLockToggle}
+          onLayerOpacityChange={handleLayerOpacityChange}
+          onLayerBlendModeChange={handleLayerBlendModeChange}
+          isPremiumUser={isPremiumUser}
+          maxFreeLayers={3}
+        />
+      )}
 
       {/* Export Modal */}
       <ExportModal
@@ -807,11 +801,6 @@ const createStyles = (theme: AppTheme) => {
       height: 40,
       justifyContent: 'center',
       alignItems: 'center',
-    },
-    title: {
-      fontSize: 18,
-      fontWeight: '600',
-      color: palette.primaryText,
     },
     actions: {
       flexDirection: 'row',

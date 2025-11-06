@@ -223,7 +223,7 @@ export class FileManager {
       let base64Data: string;
       if (typeof image.encodeToBase64 === 'function') {
         try {
-          base64Data = image.encodeToBase64('jpeg', 0.8);
+          base64Data = image.encodeToBase64('jpeg', 80);
         } catch (encodeError) {
           console.warn('JPEG encoding failed, falling back to PNG:', encodeError);
           base64Data = image.encodeToBase64('png');
