@@ -9,6 +9,11 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { SettingsProvider, useSettings } from './src/contexts/SettingsContext';
+import FeatherIcon from 'react-native-vector-icons/Feather';
+
+FeatherIcon.loadFont().catch(error => {
+  console.warn('Failed to load Feather icon font:', error);
+});
 
 const AppContent = () => {
   const { theme, isReady } = useSettings();

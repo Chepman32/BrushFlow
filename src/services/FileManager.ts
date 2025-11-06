@@ -1,4 +1,5 @@
 import RNFS from 'react-native-fs';
+import { Buffer } from 'buffer';
 import { Artwork, ArtworkMetadata, Layer } from '../types/artwork';
 import { PaintStyle, Skia } from '@shopify/react-native-skia';
 
@@ -30,10 +31,7 @@ export class FileManager {
   }
 
   async initialize(): Promise<void> {
-    // Create directories if they don't exist
-    await this.ensureDirectoryExists(ARTWORKS_DIR);
-    await this.ensureDirectoryExists(THUMBNAILS_DIR);
-    await this.ensureDirectoryExists(EXPORTS_DIR);
+    await this.ensureCoreDirectories();
   }
 
   private async ensureDirectoryExists(path: string): Promise<void> {
@@ -43,7 +41,14 @@ export class FileManager {
     }
   }
 
+  private async ensureCoreDirectories(): Promise<void> {
+    await this.ensureDirectoryExists(ARTWORKS_DIR);
+    await this.ensureDirectoryExists(THUMBNAILS_DIR);
+    await this.ensureDirectoryExists(EXPORTS_DIR);
+  }
+
   async saveArtwork(artwork: Artwork, customFilename?: string): Promise<string> {
+    await this.ensureCoreDirectories();
     const filename = customFilename || `${artwork.id}.bflow`;
     const filePath = `${ARTWORKS_DIR}/${filename}`;
 
@@ -60,6 +65,7 @@ export class FileManager {
   }
 
   async loadArtwork(id: string): Promise<Artwork> {
+    await this.ensureCoreDirectories();
     const filePath = await this.resolveArtworkFilePath(id);
     if (!filePath) {
       throw new Error('Artwork not found');
@@ -76,6 +82,7 @@ export class FileManager {
   }
 
   async deleteArtwork(id: string): Promise<void> {
+    await this.ensureCoreDirectories();
     const artworkPath = await this.resolveArtworkFilePath(id);
     if (!artworkPath) {
       throw new Error('Artwork not found');
@@ -93,6 +100,7 @@ export class FileManager {
   }
 
   async renameArtwork(id: string, newName: string): Promise<void> {
+    await this.ensureCoreDirectories();
     const artworkPath = await this.resolveArtworkFilePath(id);
     if (!artworkPath) {
       throw new Error('Artwork not found');
@@ -108,6 +116,7 @@ export class FileManager {
   }
 
   async listArtworks(): Promise<ArtworkMetadata[]> {
+    await this.ensureCoreDirectories();
     const files = await RNFS.readDir(ARTWORKS_DIR);
     const artworkFiles = files.filter(
       file =>
@@ -144,6 +153,7 @@ export class FileManager {
   }
 
   async generateThumbnail(artwork: Artwork): Promise<string> {
+    await this.ensureCoreDirectories();
     const thumbnailPath = `${THUMBNAILS_DIR}/thumb-${artwork.id}.jpg`;
 
     try {
@@ -205,14 +215,24 @@ export class FileManager {
         }
       }
 
-      // Get the image snapshot
       const image = surface.makeImageSnapshot();
+      if (!image) {
+        throw new Error('Failed to snapshot artwork surface');
+      }
 
-      // Encode as JPEG at 80% quality
-      const imageData = image.encodeToBytes(Skia.ImageFormat.JPEG, 80);
+      let base64Data: string;
+      if (typeof image.encodeToBase64 === 'function') {
+        try {
+          base64Data = image.encodeToBase64('jpeg', 0.8);
+        } catch (encodeError) {
+          console.warn('JPEG encoding failed, falling back to PNG:', encodeError);
+          base64Data = image.encodeToBase64('png');
+        }
+      } else {
+        const bytes = image.encodeToBytes();
+        base64Data = Buffer.from(bytes).toString('base64');
+      }
 
-      // Convert to base64 and save
-      const base64Data = Buffer.from(imageData).toString('base64');
       await RNFS.writeFile(thumbnailPath, base64Data, 'base64');
 
       return thumbnailPath;
@@ -282,6 +302,7 @@ export class FileManager {
   }
 
   async clearCache(): Promise<void> {
+    await this.ensureDirectoryExists(THUMBNAILS_DIR);
     // Clear old thumbnails
     const thumbnailFiles = await RNFS.readDir(THUMBNAILS_DIR);
     const now = Date.now();
@@ -295,6 +316,7 @@ export class FileManager {
   }
 
   private async resolveArtworkFilePath(id: string): Promise<string | null> {
+    await this.ensureCoreDirectories();
     const directPath = `${ARTWORKS_DIR}/${id}.bflow`;
     if (await RNFS.exists(directPath)) {
       return directPath;
@@ -324,6 +346,7 @@ export class FileManager {
   }
 
   async removeTemporaryArtworkFile(id: string, fallbackPath?: string): Promise<void> {
+    await this.ensureDirectoryExists(ARTWORKS_DIR);
     const tempPath = fallbackPath ?? `${ARTWORKS_DIR}/${id}_temp.bflow`;
     try {
       const exists = await RNFS.exists(tempPath);

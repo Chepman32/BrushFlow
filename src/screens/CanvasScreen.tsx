@@ -5,6 +5,8 @@ import {
   TouchableOpacity,
   Text,
   Dimensions,
+  StatusBar,
+  BackHandler,
 } from 'react-native';
 import { Canvas, Path, Skia } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
@@ -14,7 +16,12 @@ import {
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import {
+  useNavigation,
+  useRoute,
+  RouteProp,
+  useFocusEffect,
+} from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { RootStackParamList } from '../navigation/types';
 import { DrawingEngine } from '../engine/DrawingEngine';
@@ -121,6 +128,7 @@ export const CanvasScreen: React.FC = () => {
   const [layersPanelVisible, setLayersPanelVisible] = useState(false);
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Managers
   const drawingEngine = useRef(new DrawingEngine()).current;
@@ -207,6 +215,35 @@ export const CanvasScreen: React.FC = () => {
       console.log('📝 Artwork updated in AutoSaveManager, layers:', layers.length);
     }
   }, [layers, artworkName, artworkCreatedAt, isLoading]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const onBackPress = () => {
+        if (isFullscreen) {
+          setIsFullscreen(false);
+          return true;
+        }
+        return false;
+      };
+
+      const subscription = BackHandler.addEventListener(
+        'hardwareBackPress',
+        onBackPress,
+      );
+
+      return () => {
+        subscription.remove();
+      };
+    }, [isFullscreen]),
+  );
+
+  useEffect(() => {
+    if (isFullscreen) {
+      setColorPickerVisible(false);
+      setLayersPanelVisible(false);
+      setExportModalVisible(false);
+    }
+  }, [isFullscreen]);
 
   // Drawing gesture handlers
   const handleDrawStart = (x: number, y: number) => {
@@ -335,6 +372,11 @@ export const CanvasScreen: React.FC = () => {
     });
 
   const handleBack = () => {
+    if (isFullscreen) {
+      setIsFullscreen(false);
+      return;
+    }
+
     if (autoSaveManager.hasUnsavedChanges()) {
       // Show save prompt
       autoSaveManager.forceSave().then(() => {
@@ -363,6 +405,32 @@ export const CanvasScreen: React.FC = () => {
       setCurrentStroke(null);
       hapticManager.undoRedo();
     }
+  };
+
+  const handleClearCanvas = () => {
+    if (!hasArtworkContent) {
+      return;
+    }
+
+    setLayers(prevLayers => {
+      const clearedLayers = prevLayers.map(layer => ({
+        ...layer,
+        strokes: [],
+      }));
+      undoRedoManager.saveState(clearedLayers);
+      return clearedLayers;
+    });
+
+    currentStrokeRef.current = null;
+    setCurrentStroke(null);
+    drawingEngine.endStroke();
+    autoSaveManager.markAsModified();
+    hapticManager.buttonPress();
+  };
+
+  const toggleFullscreen = () => {
+    setIsFullscreen(prev => !prev);
+    hapticManager.buttonPress();
   };
 
   const handleToolSelect = (tool: Tool) => {
@@ -516,64 +584,110 @@ export const CanvasScreen: React.FC = () => {
       ? layers.find(layer => layer.id === currentStroke.layerId)?.opacity ?? 1
       : 1;
 
+  const hasArtworkContent = useMemo(
+    () =>
+      layers.some(layer => layer.strokes.length > 0) || Boolean(currentStroke),
+    [layers, currentStroke],
+  );
+
   return (
     <GestureHandlerRootView style={styles.container}>
-      {/* Top Bar */}
-      <View
-        style={[
-          styles.topBar,
-          { paddingTop: insets.top + spacing.md },
-        ]}
-      >
-        <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
-          <Icon name="arrow-left" size={24} color={palette.primaryText} />
-        </TouchableOpacity>
-        <Text style={styles.title}>{artworkName}</Text>
-        <View style={styles.actions}>
-          <TouchableOpacity
-            onPress={handleUndo}
-            style={styles.iconButton}
-            disabled={!undoRedoManager.canUndo()}
-          >
-            <Icon
-              name="rotate-ccw"
-              size={24}
-              color={
-                undoRedoManager.canUndo()
-                  ? palette.primaryText
-                  : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25)
-              }
-            />
+      <StatusBar hidden={isFullscreen} animated />
+      {!isFullscreen ? (
+        <View
+          style={[
+            styles.topBar,
+            { paddingTop: insets.top + spacing.md },
+          ]}
+        >
+          <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
+            <Icon name="arrow-left" size={24} color={palette.primaryText} />
           </TouchableOpacity>
+          <Text style={styles.title}>{artworkName}</Text>
+          <View style={styles.actions}>
+            <TouchableOpacity
+              onPress={handleUndo}
+              style={styles.iconButton}
+              disabled={!undoRedoManager.canUndo()}
+            >
+              <Icon
+                name="rotate-ccw"
+                size={24}
+                color={
+                  undoRedoManager.canUndo()
+                    ? palette.primaryText
+                    : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25)
+                }
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleRedo}
+              style={styles.iconButton}
+              disabled={!undoRedoManager.canRedo()}
+            >
+              <Icon
+                name="rotate-cw"
+                size={24}
+                color={
+                  undoRedoManager.canRedo()
+                    ? palette.primaryText
+                    : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25)
+                }
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleClearCanvas}
+              style={styles.iconButton}
+              disabled={!hasArtworkContent}
+              accessibilityLabel="Clear canvas"
+            >
+              <Icon
+                name="trash-2"
+                size={24}
+                color={
+                  hasArtworkContent
+                    ? palette.primaryText
+                    : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25)
+                }
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setLayersPanelVisible(true)}
+              style={styles.iconButton}
+            >
+              <Icon name="layers" size={24} color={palette.primaryText} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setExportModalVisible(true)}
+              style={styles.iconButton}
+            >
+              <Icon name="download" size={24} color={palette.primaryText} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={toggleFullscreen}
+              style={styles.iconButton}
+              accessibilityLabel="Enter fullscreen"
+            >
+              <Icon name="maximize" size={24} color={palette.primaryText} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : (
+        <View
+          style={[
+            styles.fullscreenFloating,
+            { top: insets.top + spacing.md },
+          ]}
+        >
           <TouchableOpacity
-            onPress={handleRedo}
-            style={styles.iconButton}
-            disabled={!undoRedoManager.canRedo()}
+            onPress={toggleFullscreen}
+            style={styles.fullscreenButton}
+            accessibilityLabel="Exit fullscreen"
           >
-            <Icon
-              name="rotate-cw"
-              size={24}
-              color={
-                undoRedoManager.canRedo()
-                  ? palette.primaryText
-                  : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25)
-              }
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setLayersPanelVisible(true)}
-            style={styles.iconButton}
-          >
-            <Icon name="layers" size={24} color={palette.primaryText} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setExportModalVisible(true)}
-            style={styles.iconButton}
-          >
-            <Icon name="download" size={24} color={palette.primaryText} />
+            <Icon name="minimize" size={24} color={palette.primaryText} />
           </TouchableOpacity>
         </View>
-      </View>
+      )}
 
       {/* Canvas */}
       <GestureDetector
@@ -617,17 +731,19 @@ export const CanvasScreen: React.FC = () => {
       </GestureDetector>
 
       {/* Tool Panel */}
-      <ToolPanel
-        selectedTool={selectedTool}
-        brushSettings={brushSettings}
-        primaryColor={primaryColor}
-        secondaryColor={secondaryColor}
-        onToolSelect={handleToolSelect}
-        onBrushSettingsChange={handleBrushSettingsChange}
-        onColorPress={() => setColorPickerVisible(true)}
-        onSwapColors={handleSwapColors}
-        isPremiumUser={isPremiumUser}
-      />
+      {!isFullscreen && (
+        <ToolPanel
+          selectedTool={selectedTool}
+          brushSettings={brushSettings}
+          primaryColor={primaryColor}
+          secondaryColor={secondaryColor}
+          onToolSelect={handleToolSelect}
+          onBrushSettingsChange={handleBrushSettingsChange}
+          onColorPress={() => setColorPickerVisible(true)}
+          onSwapColors={handleSwapColors}
+          isPremiumUser={isPremiumUser}
+        />
+      )}
 
       {/* Color Picker Modal */}
       <ColorPickerModal
@@ -700,6 +816,21 @@ const createStyles = (theme: AppTheme) => {
     actions: {
       flexDirection: 'row',
       gap: 4,
+    },
+    fullscreenFloating: {
+      position: 'absolute',
+      right: spacing.lg,
+      zIndex: 10,
+    },
+    fullscreenButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: withOpacity(palette.surface, theme.isDark ? 0.88 : 0.9),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withOpacity(palette.border, theme.isDark ? 0.5 : 0.35),
     },
     canvasContainer: {
       flex: 1,

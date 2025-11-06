@@ -1,6 +1,7 @@
 export { Button } from './Button';
 export { Card } from './Card';
 export { CanvasGestureHandler } from './CanvasGestureHandler';
+export { AnimatedScreenContainer } from './AnimatedScreenContainer';
 export { SideMenu } from './SideMenu';
 export { ToolPanel } from './ToolPanel';
 export { ColorPickerModal } from './ColorPickerModal';

@@ -50,9 +50,11 @@ export const SideMenu: React.FC<SideMenuProps> = ({
   const insets = useSafeAreaInsets();
   const translateX = useSharedValue(-MENU_WIDTH);
   const backdropOpacity = useSharedValue(0);
+  const [renderMenu, setRenderMenu] = React.useState(visible);
 
   React.useEffect(() => {
     if (visible) {
+      setRenderMenu(true);
       translateX.value = withSpring(0, {
         damping: 20,
         stiffness: 300,
@@ -62,10 +64,14 @@ export const SideMenu: React.FC<SideMenuProps> = ({
       translateX.value = withSpring(-MENU_WIDTH, {
         damping: 20,
         stiffness: 300,
+      }, finished => {
+        if (finished) {
+          runOnJS(setRenderMenu)(false);
+        }
       });
       backdropOpacity.value = withTiming(0, { duration: 300 });
     }
-  }, [visible]);
+  }, [visible, translateX, backdropOpacity]);
 
   const menuStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
@@ -91,13 +97,13 @@ export const SideMenu: React.FC<SideMenuProps> = ({
       }
     });
 
-  if (!visible && translateX.value === -MENU_WIDTH) {
+  if (!renderMenu) {
     return null;
   }
 
   return (
     <Modal
-      visible={visible}
+      visible={renderMenu}
       transparent
       animationType="none"
       onRequestClose={onClose}

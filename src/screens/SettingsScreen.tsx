@@ -17,6 +17,7 @@ import { useSettings } from '../contexts/SettingsContext';
 import type { LanguageCode } from '../contexts/SettingsContext';
 import { useTranslation } from '../i18n';
 import { themes, themeNames, type AppTheme, type ThemeName } from '../theme/themes';
+import { AnimatedScreenContainer } from '../components';
 
 type SettingToggleProps = {
   label: string;
@@ -110,7 +111,8 @@ export const SettingsScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <AnimatedScreenContainer style={styles.animatedContainer}>
+        <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <TouchableOpacity
             accessibilityRole="button"
@@ -232,7 +234,8 @@ export const SettingsScreen: React.FC = () => {
             })}
           </View>
         </View>
-      </ScrollView>
+        </ScrollView>
+      </AnimatedScreenContainer>
     </SafeAreaView>
   );
 };
@@ -242,6 +245,9 @@ const createStyles = (theme: AppTheme) =>
     safe: {
       flex: 1,
       backgroundColor: theme.colors.background,
+    },
+    animatedContainer: {
+      flex: 1,
     },
     content: {
       paddingHorizontal: 20,

@@ -21,7 +21,12 @@ import type { DrawerParamList } from '../navigation/types';
 import { FileManager, HapticManager, IAPManager, ExportManager } from '../services';
 import { ArtworkMetadata } from '../types';
 import { spacing } from '../theme';
-import { SideMenu, PremiumModal, TutorialCarousel } from '../components';
+import {
+  SideMenu,
+  PremiumModal,
+  TutorialCarousel,
+  AnimatedScreenContainer,
+} from '../components';
 import Icon from 'react-native-vector-icons/Feather';
 import { Canvas, FitBox, Group, Path, Rect, Skia } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
@@ -617,7 +622,7 @@ export const GalleryScreen: React.FC = () => {
   );
 
   return (
-    <View style={styles.container}>
+    <AnimatedScreenContainer style={styles.container}>
       {/* Top Navigation Bar */}
       <View style={styles.topBar}>
         <TouchableOpacity
@@ -758,7 +763,7 @@ export const GalleryScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
-    </View>
+    </AnimatedScreenContainer>
   );
 };
 
