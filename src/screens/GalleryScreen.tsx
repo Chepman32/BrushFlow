@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,20 +11,25 @@ import {
   Modal,
   TextInput,
   Platform,
+  Keyboard,
   ActionSheetIOS,
   Alert,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { DrawerNavigationProp } from '@react-navigation/drawer';
 import type { DrawerParamList } from '../navigation/types';
-import { FileManager, HapticManager, IAPManager } from '../services';
+import { FileManager, HapticManager, IAPManager, ExportManager } from '../services';
 import { ArtworkMetadata } from '../types';
-import { colors, typography, spacing } from '../theme';
+import { spacing } from '../theme';
 import { SideMenu, PremiumModal, TutorialCarousel } from '../components';
 import Icon from 'react-native-vector-icons/Feather';
 import { Canvas, FitBox, Group, Path, Rect, Skia } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
 import RNFS from 'react-native-fs';
+import { useSettings } from '../contexts/SettingsContext';
+import type { AppTheme } from '../theme/themes';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from '../i18n';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - spacing.lg * 3) / 2;
@@ -36,7 +41,9 @@ const ArtworkCard: React.FC<{
   item: ArtworkMetadata;
   onPress: (id: string) => void;
   onMorePress: (item: ArtworkMetadata) => void;
-}> = ({ item, onPress, onMorePress }) => {
+  theme: AppTheme;
+  styles: ReturnType<typeof createStyles>;
+}> = ({ item, onPress, onMorePress, theme, styles }) => {
   const [thumbnailExists, setThumbnailExists] = useState(false);
   const [previewData, setPreviewData] = useState<{
     width: number;
@@ -179,7 +186,11 @@ const ArtworkCard: React.FC<{
 
     return (
       <View style={styles.thumbnailPlaceholder}>
-        <Icon name="image" size={48} color="rgba(255,255,255,0.3)" />
+        <Icon
+          name="image"
+          size={48}
+          color={withOpacity(theme.colors.primaryText, theme.isDark ? 0.25 : 0.3)}
+        />
       </View>
     );
   };
@@ -195,7 +206,11 @@ const ArtworkCard: React.FC<{
         onPress={() => onMorePress(item)}
         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
       >
-        <Icon name="more-horizontal" size={20} color="rgba(255,255,255,0.7)" />
+        <Icon
+          name="more-horizontal"
+          size={20}
+          color={withOpacity(theme.colors.primaryText, theme.isDark ? 0.7 : 0.6)}
+        />
       </TouchableOpacity>
       <View style={styles.thumbnail}>{renderPreview()}</View>
       <View style={styles.cardInfo}>
@@ -212,7 +227,15 @@ const ArtworkCard: React.FC<{
 
 export const GalleryScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
+  const { theme } = useSettings();
+  const { locale } = useTranslation();
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(theme, insets.top), [theme, insets.top]);
+  const palette = theme.colors;
   const [artworks, setArtworks] = useState<ArtworkMetadata[]>([]);
+  const [allArtworks, setAllArtworks] = useState<ArtworkMetadata[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -222,6 +245,7 @@ export const GalleryScreen: React.FC = () => {
   const [selectedArtwork, setSelectedArtwork] = useState<ArtworkMetadata | null>(null);
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const searchInputRef = useRef<TextInput>(null);
 
   const hapticManager = HapticManager.getInstance();
   const iapManager = IAPManager.getInstance();
@@ -266,6 +290,7 @@ export const GalleryScreen: React.FC = () => {
     try {
       const fileManager = FileManager.getInstance();
       const artworkList = await fileManager.listArtworks();
+      setAllArtworks(artworkList);
       setArtworks(artworkList);
     } catch (error) {
       console.error('Failed to load artworks:', error);
@@ -357,6 +382,34 @@ export const GalleryScreen: React.FC = () => {
     }
   };
 
+  const handleShareArtwork = async (artwork: ArtworkMetadata) => {
+    try {
+      const exportManager = ExportManager.getInstance();
+      if (!artwork.thumbnailPath) {
+        Alert.alert(
+          'Share unavailable',
+          'Open the artwork once to generate a preview before sharing.',
+        );
+        return;
+      }
+
+      const exists = await RNFS.exists(artwork.thumbnailPath);
+      if (!exists) {
+        Alert.alert(
+          'Share unavailable',
+          'Preview not found. Open the artwork to regenerate it and try again.',
+        );
+        return;
+      }
+
+      await exportManager.shareArtwork(artwork.thumbnailPath, artwork.name);
+      hapticManager.trigger('success');
+    } catch (error) {
+      console.error('Failed to share artwork:', error);
+      Alert.alert('Share failed', 'Unable to share the artwork right now. Please try again.');
+    }
+  };
+
   const performDeleteArtwork = async (artwork: ArtworkMetadata) => {
     try {
       const fileManager = FileManager.getInstance();
@@ -391,15 +444,17 @@ export const GalleryScreen: React.FC = () => {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           title: artwork.name,
-          options: ['Cancel', 'Rename', 'Delete'],
+          options: ['Cancel', 'Share', 'Rename', 'Delete'],
           cancelButtonIndex: 0,
-          destructiveButtonIndex: 2,
+          destructiveButtonIndex: 3,
           userInterfaceStyle: 'dark',
         },
         buttonIndex => {
           if (buttonIndex === 1) {
-            openRenameDialog(artwork);
+            void handleShareArtwork(artwork);
           } else if (buttonIndex === 2) {
+            openRenameDialog(artwork);
+          } else if (buttonIndex === 3) {
             confirmDeleteArtwork(artwork);
           }
         },
@@ -408,6 +463,12 @@ export const GalleryScreen: React.FC = () => {
     }
 
     Alert.alert(artwork.name, undefined, [
+      {
+        text: 'Share',
+        onPress: () => {
+          void handleShareArtwork(artwork);
+        },
+      },
       {
         text: 'Rename',
         onPress: () => openRenameDialog(artwork),
@@ -424,7 +485,7 @@ export const GalleryScreen: React.FC = () => {
   const menuItems = [
     {
       id: 'gallery',
-      label: 'My Gallery',
+      label: locale.navigation.gallery,
       icon: 'grid',
       onPress: () => {
         setMenuVisible(false);
@@ -461,11 +522,29 @@ export const GalleryScreen: React.FC = () => {
     },
     {
       id: 'settings',
-      label: 'Settings',
+      label: locale.navigation.settings,
       icon: 'settings',
       onPress: () => {
         setMenuVisible(false);
-        navigation.navigate('Settings' as any);
+        navigation.navigate('Settings');
+      },
+    },
+    {
+      id: 'trash',
+      label: locale.navigation.trash,
+      icon: 'trash-2',
+      onPress: () => {
+        setMenuVisible(false);
+        navigation.navigate('Trash');
+      },
+    },
+    {
+      id: 'premium-screen',
+      label: locale.navigation.premium,
+      icon: 'zap',
+      onPress: () => {
+        setMenuVisible(false);
+        navigation.navigate('Premium');
       },
     },
     {
@@ -478,10 +557,11 @@ export const GalleryScreen: React.FC = () => {
     },
     {
       id: 'about',
-      label: 'About',
+      label: locale.navigation.about,
       icon: 'info',
       onPress: () => {
         setMenuVisible(false);
+        navigation.navigate('About');
       },
     },
   ];
@@ -491,14 +571,47 @@ export const GalleryScreen: React.FC = () => {
       item={item}
       onPress={handleArtworkPress}
       onMorePress={handleMoreOptions}
+      theme={theme}
+      styles={styles}
     />
   );
 
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setArtworks(allArtworks);
+      return;
+    }
+    const normalized = searchQuery.toLowerCase();
+    setArtworks(
+      allArtworks.filter(entry =>
+        entry.name.toLowerCase().includes(normalized),
+      ),
+    );
+  }, [searchQuery, allArtworks]);
+
+  useEffect(() => {
+    if (isSearchVisible) {
+      const timeout = setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 120);
+      return () => clearTimeout(timeout);
+    } else {
+      setSearchQuery('');
+      Keyboard.dismiss();
+    }
+  }, [isSearchVisible]);
+
+  const hasSearchQuery = searchQuery.trim().length > 0;
+
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
-      <Text style={styles.emptyTitle}>Start Your Creative Journey</Text>
+      <Text style={styles.emptyTitle}>
+        {hasSearchQuery ? 'No artworks found' : 'Start Your Creative Journey'}
+      </Text>
       <Text style={styles.emptySubtitle}>
-        Tap the + button to create your first masterpiece
+        {hasSearchQuery
+          ? 'Try a different name or clear the search.'
+          : 'Tap the + button to create your first masterpiece'}
       </Text>
     </View>
   );
@@ -511,11 +624,49 @@ export const GalleryScreen: React.FC = () => {
           onPress={() => setMenuVisible(true)}
           style={styles.iconButton}
         >
-          <Icon name="menu" size={24} color={colors.text.light} />
+          <Icon name="menu" size={24} color={palette.primaryText} />
         </TouchableOpacity>
-        <Text style={styles.title}>BrushFlow</Text>
-        <TouchableOpacity style={styles.iconButton}>
-          <Icon name="search" size={24} color={colors.text.light} />
+        {isSearchVisible ? (
+          <View style={styles.searchRow}>
+            <Icon
+              name="search"
+              size={18}
+              color={withOpacity(palette.primaryText, theme.isDark ? 0.6 : 0.5)}
+            />
+            <TextInput
+              ref={searchInputRef}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search artworks"
+              placeholderTextColor={withOpacity(
+                palette.primaryText,
+                theme.isDark ? 0.5 : 0.4,
+              )}
+              style={styles.searchInput}
+              returnKeyType="search"
+            />
+            {hasSearchQuery ? (
+              <TouchableOpacity
+                accessibilityLabel="Clear search"
+                onPress={() => setSearchQuery('')}
+                style={styles.searchClearButton}
+              >
+                <Icon name="x" size={16} color={palette.primaryText} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : (
+          <Text style={styles.title}>BrushFlow</Text>
+        )}
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => setIsSearchVisible(prev => !prev)}
+        >
+          <Icon
+            name={isSearchVisible ? 'x' : 'search'}
+            size={24}
+            color={palette.primaryText}
+          />
         </TouchableOpacity>
       </View>
 
@@ -532,7 +683,7 @@ export const GalleryScreen: React.FC = () => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor={colors.primary.blue}
+            tintColor={palette.accent}
           />
         }
       />
@@ -543,7 +694,7 @@ export const GalleryScreen: React.FC = () => {
         onPress={handleCreateNew}
         activeOpacity={0.8}
       >
-        <Icon name="plus" size={32} color={colors.text.light} />
+        <Icon name="plus" size={32} color="#FFFFFF" />
       </TouchableOpacity>
 
       {/* Side Menu */}
@@ -584,7 +735,7 @@ export const GalleryScreen: React.FC = () => {
               value={renameValue}
               onChangeText={setRenameValue}
               placeholder="Artwork name"
-              placeholderTextColor="rgba(255,255,255,0.4)"
+              placeholderTextColor={withOpacity(palette.mutedText, theme.isDark ? 0.6 : 0.5)}
               style={styles.renameInput}
               autoFocus
             />
@@ -611,179 +762,258 @@ export const GalleryScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background.dark,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.md,
-    backgroundColor: 'rgba(26, 31, 58, 0.95)',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border.dark,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text.light,
-  },
-  grid: {
-    padding: spacing.lg,
-  },
-  row: {
-    justifyContent: 'space-between',
-  },
-  card: {
-    width: CARD_WIDTH,
-    marginBottom: spacing.md,
-    borderRadius: 16,
-    backgroundColor: colors.surface.dark,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  moreButton: {
-    position: 'absolute',
-    top: spacing.sm,
-    right: spacing.sm,
-    zIndex: 2,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  thumbnail: {
-    width: '100%',
-    height: CARD_WIDTH,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    backgroundColor: colors.surface.light,
-    overflow: 'hidden',
-  },
-  thumbnailImage: {
-    width: '100%',
-    height: '100%',
-  },
-  thumbnailCanvas: {
-    width: '100%',
-    height: '100%',
-  },
-  thumbnailPlaceholder: {
-    width: '100%',
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  cardInfo: {
-    padding: spacing.md,
-  },
-  artworkName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text.light,
-    marginBottom: 4,
-  },
-  artworkMeta: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 100,
-  },
-  emptyTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: colors.text.light,
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.6)',
-    textAlign: 'center',
-  },
-  fab: {
-    position: 'absolute',
-    right: spacing.lg,
-    bottom: spacing.lg,
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.primary.blue,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.lg,
-  },
-  renameModal: {
-    width: '100%',
-    maxWidth: 360,
-    borderRadius: 20,
-    padding: spacing.lg,
-    backgroundColor: colors.surface.dark,
-  },
-  renameTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text.light,
-    marginBottom: spacing.md,
-  },
-  renameInput: {
-    borderRadius: 12,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    color: colors.text.light,
-    fontSize: 16,
-    marginBottom: spacing.lg,
-  },
-  renameActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  renameButton: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  renameButtonPrimary: {
-    backgroundColor: colors.primary.blue,
-  },
-  renameButtonText: {
-    color: colors.text.light,
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  renameButtonPrimaryText: {
-    color: '#ffffff',
-  },
-});
+const createStyles = (theme: AppTheme, topInset: number) => {
+  const palette = theme.colors;
+  const cardShadowOpacity = theme.isDark ? 0.35 : 0.12;
+  const fabShadowOpacity = theme.isDark ? 0.35 : 0.25;
+  const subtleOverlay = withOpacity(palette.primaryText, theme.isDark ? 0.12 : 0.08);
+  const strongOverlay = withOpacity(palette.primaryText, theme.isDark ? 0.24 : 0.14);
+  const barBackground = withOpacity(palette.surface, theme.isDark ? 0.94 : 0.88);
+  const modalBackground = theme.isDark
+    ? withOpacity(palette.background, 0.82)
+    : withOpacity(palette.background, 0.62);
+
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: palette.background,
+    },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.lg,
+      paddingTop: topInset + spacing.md,
+      paddingBottom: spacing.md,
+      backgroundColor: barBackground,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: palette.border,
+    },
+    searchRow: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginLeft: spacing.md,
+      marginRight: spacing.md,
+      backgroundColor: subtleOverlay,
+      borderRadius: 18,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    searchInput: {
+      flex: 1,
+      color: palette.primaryText,
+      fontSize: 16,
+      marginLeft: 8,
+      paddingVertical: Platform.OS === 'ios' ? 6 : 2,
+    },
+    searchClearButton: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: strongOverlay,
+    },
+    iconButton: {
+      width: 40,
+      height: 40,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    title: {
+      flex: 1,
+      fontSize: 18,
+      fontWeight: '600',
+      color: palette.primaryText,
+      textAlign: 'center',
+    },
+    grid: {
+      padding: spacing.lg,
+    },
+    row: {
+      justifyContent: 'space-between',
+    },
+    card: {
+      width: CARD_WIDTH,
+      marginBottom: spacing.md,
+      borderRadius: 16,
+      backgroundColor: palette.surface,
+      shadowColor: palette.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: cardShadowOpacity,
+      shadowRadius: 12,
+      elevation: 4,
+      borderWidth: theme.isDark ? 0 : StyleSheet.hairlineWidth,
+      borderColor: theme.isDark ? 'transparent' : withOpacity(palette.border, 0.2),
+    },
+    moreButton: {
+      position: 'absolute',
+      top: spacing.sm,
+      right: spacing.sm,
+      zIndex: 2,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: strongOverlay,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    thumbnail: {
+      width: '100%',
+      height: CARD_WIDTH,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      backgroundColor: palette.card,
+      overflow: 'hidden',
+    },
+    thumbnailImage: {
+      width: '100%',
+      height: '100%',
+    },
+    thumbnailCanvas: {
+      width: '100%',
+      height: '100%',
+    },
+    thumbnailPlaceholder: {
+      width: '100%',
+      height: '100%',
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: subtleOverlay,
+    },
+    cardInfo: {
+      padding: spacing.md,
+    },
+    artworkName: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: palette.primaryText,
+      marginBottom: 4,
+    },
+    artworkMeta: {
+      fontSize: 12,
+      color: palette.mutedText,
+    },
+    emptyState: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingTop: 100,
+    },
+    emptyTitle: {
+      fontSize: 24,
+      fontWeight: '700',
+      color: palette.primaryText,
+      marginBottom: 8,
+    },
+    emptySubtitle: {
+      fontSize: 16,
+      color: palette.mutedText,
+      textAlign: 'center',
+    },
+    fab: {
+      position: 'absolute',
+      right: spacing.lg,
+      bottom: spacing.lg,
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: palette.accent,
+      justifyContent: 'center',
+      alignItems: 'center',
+      shadowColor: palette.shadow,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: fabShadowOpacity,
+      shadowRadius: 24,
+      elevation: 8,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: modalBackground,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: spacing.lg,
+    },
+    renameModal: {
+      width: '100%',
+      maxWidth: 360,
+      borderRadius: 20,
+      padding: spacing.lg,
+      backgroundColor: palette.surface,
+      shadowColor: palette.shadow,
+      shadowOpacity: theme.isDark ? 0.35 : 0.12,
+      shadowOffset: { width: 0, height: 12 },
+      shadowRadius: 24,
+      elevation: 10,
+    },
+    renameTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: palette.primaryText,
+      marginBottom: spacing.md,
+    },
+    renameInput: {
+      borderRadius: 12,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      backgroundColor: subtleOverlay,
+      color: palette.primaryText,
+      fontSize: 16,
+      marginBottom: spacing.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withOpacity(palette.border, 0.6),
+    },
+    renameActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+    },
+    renameButton: {
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      borderRadius: 12,
+      backgroundColor: subtleOverlay,
+    },
+    renameButtonPrimary: {
+      backgroundColor: palette.accent,
+    },
+    renameButtonText: {
+      color: palette.primaryText,
+      fontSize: 16,
+      fontWeight: '500',
+    },
+    renameButtonPrimaryText: {
+      color: theme.isDark ? palette.background : '#FFFFFF',
+    },
+  });
+};
+
+const withOpacity = (color: string, alpha: number) => {
+  const normalized = Math.min(1, Math.max(0, alpha));
+
+  if (color.startsWith('#')) {
+    let hex = color.slice(1);
+    if (hex.length === 3) {
+      hex = hex
+        .split('')
+        .map(char => char + char)
+        .join('');
+    }
+    const bigint = parseInt(hex, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r}, ${g}, ${b}, ${normalized})`;
+  }
+
+  const rgbaMatch = color.match(/rgba?\(([^)]+)\)/);
+  if (rgbaMatch) {
+    const parts = rgbaMatch[1].split(',').map(part => part.trim());
+    const r = parseInt(parts[0], 10);
+    const g = parseInt(parts[1], 10);
+    const b = parseInt(parts[2], 10);
+    return `rgba(${r}, ${g}, ${b}, ${normalized})`;
+  }
+
+  return color;
+};

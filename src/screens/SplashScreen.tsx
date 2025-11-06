@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, StyleSheet, Dimensions, Text } from 'react-native';
 import {
   Canvas,
@@ -20,6 +20,8 @@ import Animated, {
 import { useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import type { RootStackParamList } from '../navigation/types';
+import { useSettings } from '../contexts/SettingsContext';
+import type { AppTheme } from '../theme/themes';
 
 const { width, height } = Dimensions.get('window');
 const PARTICLE_COUNT = 200;
@@ -30,6 +32,8 @@ type NavigationProp = StackNavigationProp<RootStackParamList, 'Splash'>;
 
 export const SplashScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
+  const { theme } = useSettings();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   // Animation values
   const logoScale = useSharedValue(0.8);
@@ -108,7 +112,7 @@ export const SplashScreen: React.FC = () => {
         <LinearGradient
           start={vec(0, 0)}
           end={vec(0, height)}
-          colors={['#0A0E27', '#1A1F3A']}
+          colors={[theme.colors.background, theme.colors.surface]}
         />
         <Group>
           {Array.from({ length: PARTICLE_COUNT }).map((_, index) => {
@@ -123,7 +127,7 @@ export const SplashScreen: React.FC = () => {
                 cx={targetX}
                 cy={targetY}
                 r={2}
-                color="#667EEA"
+                color={theme.colors.accent}
                 opacity={0.6}
               />
             );
@@ -144,34 +148,35 @@ export const SplashScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0A0E27',
-  },
-  canvas: {
-    position: 'absolute',
-    width,
-    height,
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logoContainer: {
-    marginBottom: 20,
-  },
-  logo: {
-    width: 80,
-    height: 80,
-    borderRadius: 20,
-    backgroundColor: '#667EEA',
-  },
-  text: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: 'bold',
-    letterSpacing: 2,
-  },
-});
+const createStyles = (theme: AppTheme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    canvas: {
+      position: 'absolute',
+      width,
+      height,
+    },
+    content: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    logoContainer: {
+      marginBottom: 20,
+    },
+    logo: {
+      width: 80,
+      height: 80,
+      borderRadius: 20,
+      backgroundColor: theme.colors.accent,
+    },
+    text: {
+      color: theme.colors.primaryText,
+      fontSize: 32,
+      fontWeight: 'bold',
+      letterSpacing: 2,
+    },
+  });

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { RootStackParamList } from '../navigation/types';
 import { DrawingEngine } from '../engine/DrawingEngine';
 import { LayerManager } from '../engine/LayerManager';
-import { colors, spacing } from '../theme';
+import { spacing } from '../theme';
 import {
   ToolPanel,
   ColorPickerModal,
@@ -35,6 +35,8 @@ import {
 } from '../services';
 import { Tool, BrushSettings, Layer, Artwork, ExportOptions } from '../types';
 import Icon from 'react-native-vector-icons/Feather';
+import { useSettings } from '../contexts/SettingsContext';
+import type { AppTheme } from '../theme/themes';
 
 const { width, height } = Dimensions.get('window');
 
@@ -64,6 +66,9 @@ export const CanvasScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute<CanvasScreenRouteProp>();
   const insets = useSafeAreaInsets();
+  const { theme } = useSettings();
+  const palette = theme.colors;
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   // Core state
   const [selectedTool, setSelectedTool] = useState<Tool>('brush');
@@ -115,7 +120,6 @@ export const CanvasScreen: React.FC = () => {
   const [colorPickerVisible, setColorPickerVisible] = useState(false);
   const [layersPanelVisible, setLayersPanelVisible] = useState(false);
   const [exportModalVisible, setExportModalVisible] = useState(false);
-  const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   // Managers
@@ -173,12 +177,11 @@ export const CanvasScreen: React.FC = () => {
       autoSaveManager.start(
         artwork,
         success => {
-          setIsAutoSaving(false);
-          if (success) {
-            console.log('✅ Auto-saved successfully:', artworkIdRef.current);
-          } else {
-            console.log('❌ Auto-save failed:', artworkIdRef.current);
-          }
+        if (success) {
+          console.log('✅ Auto-saved successfully:', artworkIdRef.current);
+        } else {
+          console.log('❌ Auto-save failed:', artworkIdRef.current);
+        }
         },
         { hasExistingFile: hasExistingFileRef.current },
       );
@@ -197,7 +200,6 @@ export const CanvasScreen: React.FC = () => {
 
       if (hasSyncedInitialArtworkRef.current) {
         autoSaveManager.markAsModified();
-        setIsAutoSaving(true);
       } else {
         hasSyncedInitialArtworkRef.current = true;
       }
@@ -301,7 +303,6 @@ export const CanvasScreen: React.FC = () => {
         return updatedLayers;
       });
       autoSaveManager.markAsModified();
-      setIsAutoSaving(true); // Show saving indicator when modified
       hapticManager.strokeCommit();
     }
 
@@ -525,7 +526,7 @@ export const CanvasScreen: React.FC = () => {
         ]}
       >
         <TouchableOpacity onPress={handleBack} style={styles.iconButton}>
-          <Icon name="arrow-left" size={24} color={colors.text.dark} />
+          <Icon name="arrow-left" size={24} color={palette.primaryText} />
         </TouchableOpacity>
         <Text style={styles.title}>{artworkName}</Text>
         <View style={styles.actions}>
@@ -538,7 +539,9 @@ export const CanvasScreen: React.FC = () => {
               name="rotate-ccw"
               size={24}
               color={
-                undoRedoManager.canUndo() ? colors.text.dark : 'rgba(0,0,0,0.3)'
+                undoRedoManager.canUndo()
+                  ? palette.primaryText
+                  : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25)
               }
             />
           </TouchableOpacity>
@@ -551,7 +554,9 @@ export const CanvasScreen: React.FC = () => {
               name="rotate-cw"
               size={24}
               color={
-                undoRedoManager.canRedo() ? colors.text.dark : 'rgba(0,0,0,0.3)'
+                undoRedoManager.canRedo()
+                  ? palette.primaryText
+                  : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25)
               }
             />
           </TouchableOpacity>
@@ -559,28 +564,16 @@ export const CanvasScreen: React.FC = () => {
             onPress={() => setLayersPanelVisible(true)}
             style={styles.iconButton}
           >
-            <Icon name="layers" size={24} color={colors.text.dark} />
+            <Icon name="layers" size={24} color={palette.primaryText} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setExportModalVisible(true)}
             style={styles.iconButton}
           >
-            <Icon name="download" size={24} color={colors.text.dark} />
+            <Icon name="download" size={24} color={palette.primaryText} />
           </TouchableOpacity>
         </View>
       </View>
-
-      {/* Auto-save indicator */}
-      {isAutoSaving && (
-        <View
-          style={[
-            styles.autoSaveIndicator,
-            { top: insets.top + spacing.lg },
-          ]}
-        >
-          <Text style={styles.autoSaveText}>Saving...</Text>
-        </View>
-      )}
 
       {/* Canvas */}
       <GestureDetector
@@ -674,54 +667,76 @@ export const CanvasScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border.light,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text.dark,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  autoSaveIndicator: {
-    position: 'absolute',
-    right: 16,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    zIndex: 100,
-  },
-  autoSaveText: {
-    color: colors.text.light,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  canvasContainer: {
-    flex: 1,
-  },
-  canvas: {
-    flex: 1,
-  },
-});
+const createStyles = (theme: AppTheme) => {
+  const palette = theme.colors;
+  const topBarBackground = withOpacity(palette.surface, theme.isDark ? 0.9 : 0.94);
+
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: palette.background,
+    },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.lg,
+      paddingBottom: spacing.md,
+      backgroundColor: topBarBackground,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: palette.border,
+    },
+    iconButton: {
+      width: 40,
+      height: 40,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    title: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: palette.primaryText,
+    },
+    actions: {
+      flexDirection: 'row',
+      gap: 4,
+    },
+    canvasContainer: {
+      flex: 1,
+    },
+    canvas: {
+      flex: 1,
+      backgroundColor: '#FFFFFF',
+    },
+  });
+};
+
+const withOpacity = (color: string, alpha: number) => {
+  const normalized = Math.min(1, Math.max(0, alpha));
+
+  if (color.startsWith('#')) {
+    let hex = color.slice(1);
+    if (hex.length === 3) {
+      hex = hex
+        .split('')
+        .map(char => char + char)
+        .join('');
+    }
+    const value = parseInt(hex, 16);
+    const r = (value >> 16) & 255;
+    const g = (value >> 8) & 255;
+    const b = value & 255;
+    return `rgba(${r}, ${g}, ${b}, ${normalized})`;
+  }
+
+  const rgbaMatch = color.match(/rgba?\(([^)]+)\)/);
+  if (rgbaMatch) {
+    const parts = rgbaMatch[1].split(',').map(part => part.trim());
+    const r = parseInt(parts[0], 10);
+    const g = parseInt(parts[1], 10);
+    const b = parseInt(parts[2], 10);
+    return `rgba(${r}, ${g}, ${b}, ${normalized})`;
+  }
+
+  return color;
+};

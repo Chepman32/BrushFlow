@@ -9,7 +9,7 @@ export type RootStackParamList = {
 export type DrawerParamList = {
   Gallery: undefined;
   Settings: undefined;
+  Trash: undefined;
   Premium: undefined;
-  Tutorials: undefined;
   About: undefined;
 };
