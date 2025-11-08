@@ -22,7 +22,7 @@ import { ExportFormat, ExportOptions } from '../types';
 import Slider from '@react-native-community/slider';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MODAL_HEIGHT = SCREEN_HEIGHT * 0.8;
+const MODAL_HEIGHT = SCREEN_HEIGHT * 0.82;
 
 type ResolutionPreset = {
   label: string;
@@ -57,7 +57,6 @@ const RESOLUTIONS: ResolutionPreset[] = [
   { label: '900×1600 (HD+ / 900p)', width: 900, height: 1600 },
   { label: '720×1280 (HD / 720p)', width: 720, height: 1280 },
   { label: '480×854 (SD / 480p)', width: 480, height: 854 },
-  { label: 'Original Size' },
 ];
 
 const resolveDimensions = (
@@ -686,9 +685,10 @@ const styles = StyleSheet.create({
     color: colors.text.dark,
   },
   footer: {
-    padding: 24,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.1)',
+    borderTopColor: 'rgba(0,0,0,0.08)',
   },
   buttonRow: {
     flexDirection: 'row',
