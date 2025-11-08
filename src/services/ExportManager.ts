@@ -12,45 +12,10 @@ import {
   PermissionsAndroid,
   Platform,
   Share,
-  TurboModuleRegistry,
+  Alert,
 } from 'react-native';
 import { HapticManager } from './HapticManager';
-
-type CameraRollModule = typeof import('@react-native-camera-roll/camera-roll').default;
-const CAMERA_ROLL_NATIVE_NAME = 'RNCCameraRoll';
-
-const hasNativeCameraRollModule = (): boolean => {
-  try {
-    return Boolean(TurboModuleRegistry.get(CAMERA_ROLL_NATIVE_NAME));
-  } catch (error) {
-    console.warn(
-      '[ExportManager] Unable to query TurboModuleRegistry for CameraRoll.',
-      error,
-    );
-    return false;
-  }
-};
-
-const loadCameraRoll = (): CameraRollModule | null => {
-  if (!hasNativeCameraRollModule()) {
-    console.warn(
-      `[ExportManager] Native module "${CAMERA_ROLL_NATIVE_NAME}" is missing. Skipping CameraRoll import.`,
-    );
-    return null;
-  }
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cameraRoll = require('@react-native-camera-roll/camera-roll').default;
-    return cameraRoll;
-  } catch (error) {
-    console.warn(
-      '[ExportManager] CameraRoll is unavailable. Did native modules finish installing?',
-      error,
-    );
-    return null;
-  }
-};
+import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 
 const DEFAULT_EXPORT_WIDTH = 1080;
 const DEFAULT_EXPORT_HEIGHT = 1440;
@@ -131,35 +96,32 @@ export class ExportManager {
         await this.ensureAndroidGalleryPermissions();
       }
 
-      const cameraRoll = loadCameraRoll();
-      if (cameraRoll) {
-        await cameraRoll.save(normalizedPath, {
+      console.log('[ExportManager] Attempting to save to gallery:', normalizedPath);
+
+      try {
+        await CameraRoll.save(normalizedPath, {
           type: 'photo',
           album: 'BrushFlow',
         });
-      } else {
-        await this.promptManualSave(normalizedPath);
-      }
+        console.log('[ExportManager] Successfully saved to gallery');
 
-      const hapticManager = HapticManager.getInstance();
-      hapticManager.exportComplete();
+        const hapticManager = HapticManager.getInstance();
+        hapticManager.exportComplete();
+      } catch (saveError) {
+        console.error('[ExportManager] CameraRoll.save failed:', saveError);
+
+        // Show error to user
+        Alert.alert(
+          'Save Failed',
+          'Unable to save to photo library. Please rebuild the app after running pod install.',
+          [{ text: 'OK' }]
+        );
+        throw saveError;
+      }
     } catch (error) {
-      console.error('Save to gallery failed:', error);
+      console.error('[ExportManager] Save to gallery failed:', error);
       throw error;
     }
-  }
-
-  private async promptManualSave(fileUrl: string): Promise<void> {
-    const instructions =
-      Platform.OS === 'ios'
-        ? 'Tap "Save Image" to add this artwork to your Photos.'
-        : 'Choose a gallery app (or Files) to store this artwork.';
-
-    await Share.share({
-      title: 'Save Artwork',
-      message: instructions,
-      url: fileUrl,
-    });
   }
 
   private async ensureAndroidGalleryPermissions(): Promise<void> {
