@@ -480,23 +480,24 @@ export const GalleryScreen: React.FC = () => {
   const performDeleteArtwork = async (artwork: ArtworkMetadata) => {
     try {
       const fileManager = FileManager.getInstance();
-      await fileManager.deleteArtwork(artwork.id);
+      await fileManager.moveToTrash(artwork.id);
       await loadArtworks();
       hapticManager.trigger('success');
+      Alert.alert('Moved to Trash', `"${artwork.name}" has been moved to trash. You can restore it from the Trash screen.`);
     } catch (error) {
-      console.error('Failed to delete artwork:', error);
-      Alert.alert('Delete failed', 'Unable to delete the artwork. Please try again.');
+      console.error('Failed to move artwork to trash:', error);
+      Alert.alert('Failed', 'Unable to move the artwork to trash. Please try again.');
     }
   };
 
   const confirmDeleteArtwork = (artwork: ArtworkMetadata) => {
     Alert.alert(
-      'Delete Artwork',
-      `Are you sure you want to delete "${artwork.name}"? This cannot be undone.`,
+      'Move to Trash',
+      `Move "${artwork.name}" to trash? You can restore it later from the Trash screen.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Move to Trash',
           style: 'destructive',
           onPress: () => performDeleteArtwork(artwork),
         },
@@ -511,7 +512,7 @@ export const GalleryScreen: React.FC = () => {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           title: artwork.name,
-          options: ['Cancel', 'Share', 'Rename', 'Delete'],
+          options: ['Cancel', 'Share', 'Rename', 'Move to Trash'],
           cancelButtonIndex: 0,
           destructiveButtonIndex: 3,
           userInterfaceStyle: 'dark',
@@ -541,7 +542,7 @@ export const GalleryScreen: React.FC = () => {
         onPress: () => openRenameDialog(artwork),
       },
       {
-        text: 'Delete',
+        text: 'Move to Trash',
         style: 'destructive',
         onPress: () => confirmDeleteArtwork(artwork),
       },

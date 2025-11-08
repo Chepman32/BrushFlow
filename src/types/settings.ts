@@ -19,6 +19,8 @@ export interface AppSettings {
   };
   storage: {
     autoDeleteThumbnails: boolean;
+    autoDeleteTrash: boolean;
+    trashRetentionDays: 7 | 30 | 60 | 90;
   };
   export: {
     defaultFormat: 'png' | 'jpeg';
@@ -48,6 +50,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   storage: {
     autoDeleteThumbnails: true,
+    autoDeleteTrash: false,
+    trashRetentionDays: 30,
   },
   export: {
     defaultFormat: 'png',

@@ -398,12 +398,13 @@ export const CanvasScreen: React.FC = () => {
     drawingEngine.endStroke();
 
     if (completedStroke) {
+      const strokeToAdd = completedStroke; // Capture non-null value for closure
       setLayers(prevLayers => {
         const updatedLayers = prevLayers.map(layer =>
-          layer.id === completedStroke.layerId
+          layer.id === strokeToAdd.layerId
             ? {
                 ...layer,
-                strokes: [...layer.strokes, completedStroke],
+                strokes: [...layer.strokes, strokeToAdd],
               }
             : layer,
         );

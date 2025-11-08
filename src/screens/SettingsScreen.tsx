@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ScrollView,
   View,
@@ -19,7 +19,8 @@ import type { LanguageCode } from '../contexts/SettingsContext';
 import { useTranslation } from '../i18n';
 import { themes, themeNames, type AppTheme, type ThemeName } from '../theme/themes';
 import { AnimatedScreenContainer, RemoveWatermarkModal } from '../components';
-import { IAPManager } from '../services';
+import { IAPManager, SettingsManager, TrashCleanupService } from '../services';
+import type { TrashRetentionDays } from '../types';
 
 type SettingToggleProps = {
   label: string;
@@ -80,6 +81,28 @@ export const SettingsScreen: React.FC = () => {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [watermarkModalVisible, setWatermarkModalVisible] = useState(false);
   const [isProcessingWatermark, setIsProcessingWatermark] = useState(false);
+
+  const [autoDeleteTrash, setAutoDeleteTrash] = useState(false);
+  const [trashRetentionDays, setTrashRetentionDays] = useState<TrashRetentionDays>(30);
+  const [trashStats, setTrashStats] = useState<{ itemCount: number; storageSize: number }>({
+    itemCount: 0,
+    storageSize: 0
+  });
+
+  const settingsManager = useMemo(() => SettingsManager.getInstance(), []);
+  const trashCleanupService = useMemo(() => TrashCleanupService.getInstance(), []);
+
+  useEffect(() => {
+    const loadTrashSettings = async () => {
+      const settings = settingsManager.getSettings();
+      setAutoDeleteTrash(settings.storage.autoDeleteTrash);
+      setTrashRetentionDays(settings.storage.trashRetentionDays);
+
+      const stats = await trashCleanupService.getTrashStatus();
+      setTrashStats({ itemCount: stats.itemCount, storageSize: stats.storageSize });
+    };
+    void loadTrashSettings();
+  }, [settingsManager, trashCleanupService]);
 
   const handleThemeSelect = useCallback(
     (value: ThemeName) => {
@@ -147,6 +170,53 @@ export const SettingsScreen: React.FC = () => {
       Alert.alert('Restore failed', 'Unable to restore purchases right now. Please try again.');
     }
   }, []);
+
+  const handleAutoDeleteTrashToggle = useCallback(
+    async (value: boolean) => {
+      setAutoDeleteTrash(value);
+      await settingsManager.updateStorageSettings({ autoDeleteTrash: value });
+    },
+    [settingsManager],
+  );
+
+  const handleRetentionDaysSelect = useCallback(
+    async (days: TrashRetentionDays) => {
+      if (days !== trashRetentionDays) {
+        setTrashRetentionDays(days);
+        await settingsManager.updateStorageSettings({ trashRetentionDays: days });
+      }
+    },
+    [settingsManager, trashRetentionDays],
+  );
+
+  const handleEmptyTrash = useCallback(async () => {
+    if (trashStats.itemCount === 0) {
+      Alert.alert('Trash is Empty', 'There are no items in the trash.');
+      return;
+    }
+
+    Alert.alert(
+      'Empty Trash',
+      `Permanently delete all ${trashStats.itemCount} items? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Empty Trash',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await trashCleanupService.emptyTrash();
+              setTrashStats({ itemCount: 0, storageSize: 0 });
+              Alert.alert('Trash Emptied', 'All items have been permanently deleted.');
+            } catch (error) {
+              console.error('Failed to empty trash:', error);
+              Alert.alert('Failed', 'Unable to empty trash. Please try again.');
+            }
+          },
+        },
+      ],
+    );
+  }, [trashStats.itemCount, trashCleanupService]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -291,6 +361,101 @@ export const SettingsScreen: React.FC = () => {
                 </Text>
               </View>
               <Icon name="chevron-right" size={20} color={theme.colors.primaryText} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Trash & Storage</Text>
+          <Text style={styles.sectionDescription}>
+            Manage deleted artworks and automatic cleanup settings.
+          </Text>
+          <View style={styles.card}>
+            <SettingToggleRow
+              label="Auto-delete old items"
+              description={`Automatically delete items older than ${trashRetentionDays} days`}
+              value={autoDeleteTrash}
+              onChange={handleAutoDeleteTrashToggle}
+              styles={styles}
+              accentColor={theme.colors.accent}
+              idleTrackColor={theme.colors.border}
+            />
+          </View>
+
+          {autoDeleteTrash && (
+            <>
+              <Text style={[styles.sectionDescription, { marginTop: 16 }]}>
+                Items will be permanently deleted after:
+              </Text>
+              <View style={styles.retentionDaysWrap}>
+                {([7, 30, 60, 90] as TrashRetentionDays[]).map(days => {
+                  const selected = days === trashRetentionDays;
+                  return (
+                    <TouchableOpacity
+                      key={days}
+                      activeOpacity={0.85}
+                      onPress={() => handleRetentionDaysSelect(days)}
+                      style={[
+                        styles.retentionChip,
+                        {
+                          borderColor: selected ? theme.colors.accent : theme.colors.border,
+                          backgroundColor: selected
+                            ? theme.colors.surface
+                            : theme.colors.background,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.retentionText,
+                          { color: selected ? theme.colors.accent : theme.colors.primaryText },
+                        ]}
+                      >
+                        {days} days
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>
+          )}
+
+          <View style={[styles.card, { marginTop: 16 }]}>
+            <View style={styles.trashStatsRow}>
+              <View style={styles.trashStatItem}>
+                <Text style={styles.trashStatValue}>{trashStats.itemCount}</Text>
+                <Text style={styles.trashStatLabel}>
+                  {trashStats.itemCount === 1 ? 'item' : 'items'}
+                </Text>
+              </View>
+              <View style={styles.trashStatDivider} />
+              <View style={styles.trashStatItem}>
+                <Text style={styles.trashStatValue}>
+                  {trashCleanupService.formatStorageSize(trashStats.storageSize)}
+                </Text>
+                <Text style={styles.trashStatLabel}>storage used</Text>
+              </View>
+            </View>
+            <View style={styles.divider} />
+            <TouchableOpacity
+              style={styles.emptyTrashButton}
+              activeOpacity={0.85}
+              onPress={handleEmptyTrash}
+              disabled={trashStats.itemCount === 0}
+            >
+              <Icon
+                name="trash-2"
+                size={18}
+                color={trashStats.itemCount === 0 ? theme.colors.mutedText : theme.colors.error}
+              />
+              <Text
+                style={[
+                  styles.emptyTrashText,
+                  { color: trashStats.itemCount === 0 ? theme.colors.mutedText : theme.colors.error }
+                ]}
+              >
+                Empty Trash Now
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -464,6 +629,58 @@ const createStyles = (theme: AppTheme) =>
     },
     languageText: {
       fontSize: 15,
+      fontWeight: '600',
+    },
+    retentionDaysWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginTop: 12,
+    },
+    retentionChip: {
+      paddingVertical: 8,
+      paddingHorizontal: 16,
+      borderRadius: 22,
+      borderWidth: 1,
+      marginRight: 12,
+      marginBottom: 12,
+    },
+    retentionText: {
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    trashStatsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 16,
+    },
+    trashStatItem: {
+      flex: 1,
+      alignItems: 'center',
+    },
+    trashStatValue: {
+      fontSize: 24,
+      fontWeight: '700',
+      color: theme.colors.primaryText,
+    },
+    trashStatLabel: {
+      fontSize: 13,
+      color: theme.colors.mutedText,
+      marginTop: 4,
+    },
+    trashStatDivider: {
+      width: 1,
+      height: 40,
+      backgroundColor: theme.colors.border,
+    },
+    emptyTrashButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 16,
+      gap: 8,
+    },
+    emptyTrashText: {
+      fontSize: 16,
       fontWeight: '600',
     },
   });

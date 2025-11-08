@@ -1,11 +1,13 @@
 import RNFS from 'react-native-fs';
 import { Buffer } from 'buffer';
-import { Artwork, ArtworkMetadata, Layer } from '../types/artwork';
+import { Artwork, ArtworkMetadata, Layer, TrashedArtwork } from '../types/artwork';
 import { PaintStyle, Skia, ImageFormat } from '@shopify/react-native-skia';
 
 const ARTWORKS_DIR = `${RNFS.DocumentDirectoryPath}/Artworks`;
 const THUMBNAILS_DIR = `${RNFS.DocumentDirectoryPath}/Thumbnails`;
 const EXPORTS_DIR = `${RNFS.DocumentDirectoryPath}/Exports`;
+const TRASH_DIR = `${RNFS.DocumentDirectoryPath}/Trash`;
+const TRASH_THUMBNAILS_DIR = `${TRASH_DIR}/Thumbnails`;
 
 export interface ExportOptions {
   format: 'png' | 'jpeg' | 'psd' | 'tiff' | 'svg';
@@ -45,6 +47,8 @@ export class FileManager {
     await this.ensureDirectoryExists(ARTWORKS_DIR);
     await this.ensureDirectoryExists(THUMBNAILS_DIR);
     await this.ensureDirectoryExists(EXPORTS_DIR);
+    await this.ensureDirectoryExists(TRASH_DIR);
+    await this.ensureDirectoryExists(TRASH_THUMBNAILS_DIR);
   }
 
   async saveArtwork(artwork: Artwork, customFilename?: string): Promise<string> {
@@ -81,7 +85,15 @@ export class FileManager {
     };
   }
 
+  /**
+   * @deprecated Use moveToTrash() instead for soft delete, or permanentlyDeleteArtwork() for hard delete
+   */
   async deleteArtwork(id: string): Promise<void> {
+    // For backward compatibility, call moveToTrash
+    await this.moveToTrash(id);
+  }
+
+  async moveToTrash(id: string): Promise<void> {
     await this.ensureCoreDirectories();
     const artworkPath = await this.resolveArtworkFilePath(id);
     if (!artworkPath) {
@@ -89,14 +101,171 @@ export class FileManager {
     }
     const thumbnailPath = `${THUMBNAILS_DIR}/thumb-${id}.jpg`;
 
-    // Delete artwork file
-    await RNFS.unlink(artworkPath);
+    // Load artwork to save trash metadata
+    const artwork = await this.loadArtwork(id);
 
-    // Delete thumbnail
+    // Create trash metadata
+    const trashedArtwork: TrashedArtwork = {
+      id: artwork.id,
+      name: artwork.name,
+      createdAt: artwork.createdAt,
+      modifiedAt: artwork.modifiedAt,
+      width: artwork.width,
+      height: artwork.height,
+      layerCount: artwork.layers.length,
+      thumbnailPath: `${TRASH_THUMBNAILS_DIR}/thumb-${id}.jpg`,
+      deletedAt: new Date(),
+      originalPath: artworkPath,
+      originalThumbnailPath: thumbnailPath,
+    };
+
+    // Move artwork to trash
+    const trashArtworkPath = `${TRASH_DIR}/${id}.bflow`;
+    await RNFS.moveFile(artworkPath, trashArtworkPath);
+
+    // Move thumbnail to trash
     const thumbnailExists = await RNFS.exists(thumbnailPath);
     if (thumbnailExists) {
-      await RNFS.unlink(thumbnailPath);
+      const trashThumbnailPath = `${TRASH_THUMBNAILS_DIR}/thumb-${id}.jpg`;
+      await RNFS.moveFile(thumbnailPath, trashThumbnailPath);
     }
+
+    // Save trash metadata
+    const trashMetadataPath = `${TRASH_DIR}/${id}.meta`;
+    await RNFS.writeFile(
+      trashMetadataPath,
+      JSON.stringify({
+        ...trashedArtwork,
+        deletedAt: trashedArtwork.deletedAt.toISOString(),
+        createdAt: trashedArtwork.createdAt.toISOString(),
+        modifiedAt: trashedArtwork.modifiedAt.toISOString(),
+      }),
+      'utf8'
+    );
+  }
+
+  async listTrashedArtworks(): Promise<TrashedArtwork[]> {
+    await this.ensureCoreDirectories();
+    const files = await RNFS.readDir(TRASH_DIR);
+    const metadataFiles = files.filter(file => file.name.endsWith('.meta'));
+
+    const trashedList: TrashedArtwork[] = [];
+
+    for (const file of metadataFiles) {
+      try {
+        const data = await RNFS.readFile(file.path, 'utf8');
+        const metadata = JSON.parse(data);
+
+        trashedList.push({
+          ...metadata,
+          createdAt: new Date(metadata.createdAt),
+          modifiedAt: new Date(metadata.modifiedAt),
+          deletedAt: new Date(metadata.deletedAt),
+        });
+      } catch (error) {
+        console.error(`Failed to read trash metadata ${file.name}:`, error);
+      }
+    }
+
+    // Sort by deleted date (newest first)
+    return trashedList.sort(
+      (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime()
+    );
+  }
+
+  async restoreFromTrash(id: string): Promise<void> {
+    await this.ensureCoreDirectories();
+    const trashArtworkPath = `${TRASH_DIR}/${id}.bflow`;
+    const trashMetadataPath = `${TRASH_DIR}/${id}.meta`;
+    const trashThumbnailPath = `${TRASH_THUMBNAILS_DIR}/thumb-${id}.jpg`;
+
+    // Check if artwork exists in trash
+    const exists = await RNFS.exists(trashArtworkPath);
+    if (!exists) {
+      throw new Error('Artwork not found in trash');
+    }
+
+    // Move artwork back to artworks directory
+    const artworkPath = `${ARTWORKS_DIR}/${id}.bflow`;
+    await RNFS.moveFile(trashArtworkPath, artworkPath);
+
+    // Move thumbnail back
+    const thumbnailExists = await RNFS.exists(trashThumbnailPath);
+    if (thumbnailExists) {
+      const thumbnailPath = `${THUMBNAILS_DIR}/thumb-${id}.jpg`;
+      await RNFS.moveFile(trashThumbnailPath, thumbnailPath);
+    }
+
+    // Delete trash metadata
+    const metadataExists = await RNFS.exists(trashMetadataPath);
+    if (metadataExists) {
+      await RNFS.unlink(trashMetadataPath);
+    }
+  }
+
+  async permanentlyDeleteFromTrash(id: string): Promise<void> {
+    await this.ensureCoreDirectories();
+    const trashArtworkPath = `${TRASH_DIR}/${id}.bflow`;
+    const trashMetadataPath = `${TRASH_DIR}/${id}.meta`;
+    const trashThumbnailPath = `${TRASH_THUMBNAILS_DIR}/thumb-${id}.jpg`;
+
+    // Delete artwork file
+    const artworkExists = await RNFS.exists(trashArtworkPath);
+    if (artworkExists) {
+      await RNFS.unlink(trashArtworkPath);
+    }
+
+    // Delete thumbnail
+    const thumbnailExists = await RNFS.exists(trashThumbnailPath);
+    if (thumbnailExists) {
+      await RNFS.unlink(trashThumbnailPath);
+    }
+
+    // Delete metadata
+    const metadataExists = await RNFS.exists(trashMetadataPath);
+    if (metadataExists) {
+      await RNFS.unlink(trashMetadataPath);
+    }
+  }
+
+  async emptyTrash(): Promise<void> {
+    await this.ensureCoreDirectories();
+    const trashedArtworks = await this.listTrashedArtworks();
+
+    for (const artwork of trashedArtworks) {
+      await this.permanentlyDeleteFromTrash(artwork.id);
+    }
+  }
+
+  async cleanupOldTrash(retentionDays: number): Promise<number> {
+    await this.ensureCoreDirectories();
+    const trashedArtworks = await this.listTrashedArtworks();
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+
+    let deletedCount = 0;
+
+    for (const artwork of trashedArtworks) {
+      if (artwork.deletedAt < cutoffDate) {
+        await this.permanentlyDeleteFromTrash(artwork.id);
+        deletedCount++;
+      }
+    }
+
+    return deletedCount;
+  }
+
+  async getTrashStorageSize(): Promise<number> {
+    await this.ensureCoreDirectories();
+    const files = await RNFS.readDir(TRASH_DIR);
+    const thumbnails = await RNFS.readDir(TRASH_THUMBNAILS_DIR);
+
+    let size = 0;
+    for (const file of [...files, ...thumbnails]) {
+      size += file.size;
+    }
+
+    return size;
   }
 
   async renameArtwork(id: string, newName: string): Promise<void> {

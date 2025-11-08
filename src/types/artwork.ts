@@ -68,3 +68,16 @@ export interface ArtworkMetadata {
   layerCount: number;
   thumbnailPath: string;
 }
+
+export interface TrashedArtwork extends ArtworkMetadata {
+  deletedAt: Date;
+  originalPath: string;
+  originalThumbnailPath: string;
+}
+
+export type TrashRetentionDays = 7 | 30 | 60 | 90;
+
+export interface TrashSettings {
+  autoDeleteTrash: boolean;
+  trashRetentionDays: TrashRetentionDays;
+}
