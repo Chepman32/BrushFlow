@@ -865,6 +865,8 @@ export const CanvasScreen: React.FC = () => {
         onExport={handleExport}
         onSaveToGallery={handleSaveToGallery}
         isPremiumUser={isPremiumUser}
+        artworkWidth={artworkResolution.width}
+        artworkHeight={artworkResolution.height}
       />
     </GestureHandlerRootView>
   );

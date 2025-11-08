@@ -6,6 +6,8 @@ import {
   PaintStyle,
   StrokeCap,
   StrokeJoin,
+  ColorType,
+  AlphaType,
 } from '@shopify/react-native-skia';
 import { Buffer } from 'buffer';
 import {
@@ -16,9 +18,18 @@ import {
 } from 'react-native';
 import { HapticManager } from './HapticManager';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
+import { writePsdUint8Array, ColorMode, type Layer as PsdLayer, type Psd } from 'ag-psd';
+import * as UTIF from 'utif';
 
 const DEFAULT_EXPORT_WIDTH = 1080;
 const DEFAULT_EXPORT_HEIGHT = 1440;
+const EXPORTS_DIR = `${RNFS.DocumentDirectoryPath}/Exports`;
+
+type RasterPixelData = {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+};
 
 export class ExportManager {
   private static instance: ExportManager;
@@ -39,6 +50,16 @@ export class ExportManager {
   ): Promise<string> {
     try {
       onProgress?.(0);
+
+      if (options.format === 'svg') {
+        onProgress?.(30);
+        const exportPath = await this.exportToSvg(artwork, options);
+        onProgress?.(100);
+
+        const hapticManager = HapticManager.getInstance();
+        hapticManager.exportComplete();
+        return exportPath;
+      }
 
       // Flatten layers based on format
       onProgress?.(20);
@@ -196,6 +217,10 @@ export class ExportManager {
     }
 
     const canvas = surface.getCanvas();
+    const supportsTransparency = ['png', 'psd', 'tiff', 'svg'].includes(options.format);
+    const shouldPreserveTransparency = supportsTransparency
+      ? options.preserveTransparency !== false
+      : false;
     const viewportWidth = Math.max(
       1,
       artwork.viewportWidth ?? artwork.width ?? targetWidth,
@@ -207,12 +232,19 @@ export class ExportManager {
     const scaleX = targetWidth / viewportWidth;
     const scaleY = targetHeight / viewportHeight;
 
-    const backgroundPaint = Skia.Paint();
-    backgroundPaint.setStyle(PaintStyle.Fill);
-    backgroundPaint.setColor(
-      Skia.Color(artwork.backgroundColor || '#FFFFFF'),
-    );
-    canvas.drawRect(Skia.XYWHRect(0, 0, targetWidth, targetHeight), backgroundPaint);
+    if (shouldPreserveTransparency) {
+      canvas.clear(Skia.Color('rgba(0,0,0,0)'));
+    } else {
+      const backgroundPaint = Skia.Paint();
+      backgroundPaint.setStyle(PaintStyle.Fill);
+      backgroundPaint.setColor(
+        Skia.Color(artwork.backgroundColor || '#FFFFFF'),
+      );
+      canvas.drawRect(
+        Skia.XYWHRect(0, 0, targetWidth, targetHeight),
+        backgroundPaint,
+      );
+    }
 
     canvas.save();
     canvas.scale(scaleX, scaleY);
@@ -357,38 +389,36 @@ export class ExportManager {
   ): Promise<string> {
     const timestamp = Date.now();
     const filename = options.filename || `artwork_${timestamp}`;
-    let filePath: string;
-    let data: Uint8Array;
+    const exportDir = await this.ensureExportsDirectory();
+    let filePath: string | null = null;
+    let data: Uint8Array | null = null;
 
     switch (options.format) {
-      case 'png':
-        filePath = `${RNFS.DocumentDirectoryPath}/Exports/${filename}.png`;
-        data = image.encodeToBytes();
+      case 'png': {
+        filePath = `${exportDir}/${filename}.png`;
+        data = image.encodeToBytes(Skia.ImageFormat.PNG);
         break;
-
-      case 'jpeg':
-        filePath = `${RNFS.DocumentDirectoryPath}/Exports/${filename}.jpg`;
-        // JPEG encoding with quality
-        const quality = options.quality || 90;
+      }
+      case 'jpeg': {
+        filePath = `${exportDir}/${filename}.jpg`;
+        const quality = Math.min(100, Math.max(1, options.quality ?? 90));
         data = image.encodeToBytes(Skia.ImageFormat.JPEG, quality);
         break;
-
-      case 'webp':
-        filePath = `${RNFS.DocumentDirectoryPath}/Exports/${filename}.webp`;
-        data = image.encodeToBytes(
-          Skia.ImageFormat.WEBP,
-          options.quality || 90,
-        );
-        break;
-
+      }
+      case 'svg':
+        return this.exportToSvg(artwork, options);
+      case 'psd':
+        return this.exportToPsd(image, artwork, options);
+      case 'tiff':
+        return this.exportToTiff(image, options);
       default:
         throw new Error(`Unsupported format: ${options.format}`);
     }
 
-    // Ensure exports directory exists
-    await RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/Exports`);
+    if (!filePath || !data) {
+      throw new Error(`Failed to encode format: ${options.format}`);
+    }
 
-    // Write file
     const base64Data = Buffer.from(data).toString('base64');
     await RNFS.writeFile(filePath, base64Data, 'base64');
 
@@ -491,6 +521,244 @@ export class ExportManager {
     return surface.makeImageSnapshot();
   }
 
+  private readImagePixels(image: SkiaImage): RasterPixelData {
+    const width = Math.max(1, image.width());
+    const height = Math.max(1, image.height());
+    const imageInfo = {
+      width,
+      height,
+      colorType: ColorType.RGBA_8888,
+      alphaType: AlphaType.Unpremul,
+    };
+    const pixels = image.readPixels(0, 0, imageInfo);
+    if (!pixels) {
+      throw new Error('Unable to read image pixels for export.');
+    }
+
+    let uintArray: Uint8Array | Uint8ClampedArray;
+    if (pixels instanceof Uint8Array || pixels instanceof Uint8ClampedArray) {
+      uintArray = pixels;
+    } else {
+      uintArray = new Uint8Array(pixels.length);
+      for (let i = 0; i < pixels.length; i++) {
+        const value = pixels[i];
+        const normalized = Number.isFinite(value)
+          ? Math.max(0, Math.min(1, value))
+          : 0;
+        uintArray[i] = Math.round(normalized * 255);
+      }
+    }
+
+    const clamped =
+      uintArray instanceof Uint8ClampedArray
+        ? uintArray
+        : new Uint8ClampedArray(uintArray);
+
+    return {
+      width,
+      height,
+      data: clamped,
+    };
+  }
+
+  private async exportToPsd(
+    image: SkiaImage,
+    artwork: Artwork,
+    options: ExportOptions,
+  ): Promise<string> {
+    const raster = this.readImagePixels(image);
+    const exportDir = await this.ensureExportsDirectory();
+    const baseFilename =
+      options.filename?.replace(/\.psd$/i, '') || `artwork_${Date.now()}`;
+    const filePath = `${exportDir}/${baseFilename}.psd`;
+
+    const layerName = options.filename || artwork.name || 'Artwork';
+    const baseLayer: PsdLayer = {
+      name: layerName,
+      opacity: 255,
+      visible: true,
+      blendMode: 'normal',
+      top: 0,
+      left: 0,
+      right: raster.width,
+      bottom: raster.height,
+      imageData: raster,
+    };
+    const psdDocument: Psd = {
+      width: raster.width,
+      height: raster.height,
+      bitsPerChannel: 8,
+      colorMode: ColorMode.RGB,
+      channels: 3,
+      imageData: raster,
+      children: [baseLayer],
+    };
+
+    const psdBytes = writePsdUint8Array(psdDocument);
+    const base64Data = Buffer.from(psdBytes).toString('base64');
+    await RNFS.writeFile(filePath, base64Data, 'base64');
+
+    return filePath;
+  }
+
+  private async exportToTiff(
+    image: SkiaImage,
+    options: ExportOptions,
+  ): Promise<string> {
+    const raster = this.readImagePixels(image);
+    const exportDir = await this.ensureExportsDirectory();
+    const baseFilename =
+      options.filename?.replace(/\.tiff?$/i, '') || `artwork_${Date.now()}`;
+    const filePath = `${exportDir}/${baseFilename}.tiff`;
+
+    const metadata =
+      options.dpi && options.dpi > 0
+        ? {
+            t282: [options.dpi],
+            t283: [options.dpi],
+          }
+        : undefined;
+
+    const tiffBuffer = UTIF.encodeImage(
+      raster.data,
+      raster.width,
+      raster.height,
+      metadata,
+    );
+    const bytes = new Uint8Array(tiffBuffer);
+    const base64Data = Buffer.from(bytes).toString('base64');
+    await RNFS.writeFile(filePath, base64Data, 'base64');
+
+    return filePath;
+  }
+
+  private async ensureExportsDirectory(): Promise<string> {
+    const exists = await RNFS.exists(EXPORTS_DIR);
+    if (!exists) {
+      await RNFS.mkdir(EXPORTS_DIR);
+    }
+    return EXPORTS_DIR;
+  }
+
+  private normalizeColorForSvg(color?: string): { color: string; alpha: number } {
+    if (!color) {
+      return { color: '#000000', alpha: 1 };
+    }
+
+    const hexMatch = color.match(/^#([0-9a-f]{6})([0-9a-f]{2})?$/i);
+    if (hexMatch) {
+      const base = `#${hexMatch[1]}`;
+      const alphaHex = hexMatch[2];
+      const alpha = alphaHex ? parseInt(alphaHex, 16) / 255 : 1;
+      const safeAlpha = Number.isFinite(alpha) ? Math.min(Math.max(alpha, 0), 1) : 1;
+      return { color: base, alpha: safeAlpha };
+    }
+
+    const rgbaMatch = color.match(/^rgba?\(([^)]+)\)$/i);
+    if (rgbaMatch) {
+      const parts = rgbaMatch[1].split(',').map(part => part.trim());
+      const [r = '0', g = '0', b = '0', a] = parts;
+      const alpha = a !== undefined ? parseFloat(a) : 1;
+      const safeAlpha = Number.isFinite(alpha) ? Math.min(Math.max(alpha, 0), 1) : 1;
+      return {
+        color: `rgb(${r}, ${g}, ${b})`,
+        alpha: safeAlpha,
+      };
+    }
+
+    return { color, alpha: 1 };
+  }
+
+  private async exportToSvg(
+    artwork: Artwork,
+    options: ExportOptions,
+  ): Promise<string> {
+    const targetWidth = Math.max(
+      1,
+      Math.round(options.width ?? artwork.width ?? DEFAULT_EXPORT_WIDTH),
+    );
+    const targetHeight = Math.max(
+      1,
+      Math.round(options.height ?? artwork.height ?? DEFAULT_EXPORT_HEIGHT),
+    );
+    const viewBoxWidth = Math.max(
+      1,
+      artwork.viewportWidth ?? artwork.width ?? targetWidth,
+    );
+    const viewBoxHeight = Math.max(
+      1,
+      artwork.viewportHeight ?? artwork.height ?? targetHeight,
+    );
+
+    const preserveTransparency = options.preserveTransparency !== false;
+    const backgroundColor = preserveTransparency
+      ? null
+      : artwork.backgroundColor || '#FFFFFF';
+
+    const svgLines: string[] = [];
+    svgLines.push('<?xml version="1.0" encoding="UTF-8"?>');
+    svgLines.push(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${targetWidth}" height="${targetHeight}" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" fill="none">`,
+    );
+
+    if (backgroundColor) {
+      svgLines.push(
+        `  <rect width="100%" height="100%" fill="${backgroundColor}" />`,
+      );
+    }
+
+    const layers = Array.isArray(artwork.layers) ? artwork.layers : [];
+    for (const layer of layers) {
+      if (layer.visible === false) {
+        continue;
+      }
+
+      const strokes = Array.isArray(layer.strokes) ? layer.strokes : [];
+      for (const stroke of strokes) {
+        const pathData =
+          stroke.svgPath ||
+          (stroke.path &&
+          typeof stroke.path.toSVGString === 'function'
+            ? stroke.path.toSVGString()
+            : null);
+        if (!pathData) {
+          continue;
+        }
+
+        const strokeWidth = Math.max(0.1, stroke.strokeWidth ?? 1);
+        const strokeCap = stroke.strokeCap ?? 'round';
+        const strokeJoin = stroke.strokeJoin ?? 'round';
+        const opacityMultiplier =
+          (typeof stroke.opacity === 'number' ? stroke.opacity : 1) *
+          (typeof layer.opacity === 'number' ? layer.opacity : 1);
+        const { color, alpha } = this.normalizeColorForSvg(stroke.color);
+        const combinedOpacity = Math.min(
+          1,
+          Math.max(0, opacityMultiplier * alpha),
+        );
+        const opacityAttribute =
+          combinedOpacity < 1
+            ? ` stroke-opacity="${combinedOpacity.toFixed(3)}"`
+            : '';
+
+        svgLines.push(
+          `  <path d="${pathData}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="${strokeCap}" stroke-linejoin="${strokeJoin}"${opacityAttribute} />`,
+        );
+      }
+    }
+
+    svgLines.push('</svg>');
+
+    const exportDir = await this.ensureExportsDirectory();
+    const baseFilename =
+      options.filename?.replace(/\.svg$/i, '') ||
+      `artwork_${Date.now()}`;
+    const filePath = `${exportDir}/${baseFilename}.svg`;
+    await RNFS.writeFile(filePath, svgLines.join('\n'), 'utf8');
+
+    return filePath;
+  }
+
   calculateFileSize(
     width: number,
     height: number,
@@ -502,12 +770,14 @@ export class ExportManager {
 
     switch (format) {
       case 'png':
+      case 'psd':
+      case 'tiff':
         return pixels * 4; // RGBA
       case 'jpeg':
         const q = quality || 90;
         return (pixels * 3 * q) / 100; // RGB with quality factor
-      case 'webp':
-        return (pixels * 3 * (quality || 90)) / 100;
+      case 'svg':
+        return Math.max(50000, pixels * 0.5);
       default:
         return pixels * 4;
     }

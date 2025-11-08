@@ -22,7 +22,14 @@ import { ExportFormat, ExportOptions } from '../types';
 import Slider from '@react-native-community/slider';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MODAL_HEIGHT = SCREEN_HEIGHT * 0.6;
+const MODAL_HEIGHT = SCREEN_HEIGHT * 0.8;
+
+type ResolutionPreset = {
+  label: string;
+  width?: number;
+  height?: number;
+  isPremium?: boolean;
+};
 
 interface ExportModalProps {
   visible: boolean;
@@ -30,26 +37,40 @@ interface ExportModalProps {
   onExport: (options: ExportOptions) => Promise<void>;
   onSaveToGallery?: (options: ExportOptions) => Promise<void>;
   isPremiumUser: boolean;
+  artworkWidth: number;
+  artworkHeight: number;
 }
 
 const FORMATS: Array<{ id: ExportFormat; label: string; isPremium?: boolean }> =
   [
     { id: 'png', label: 'PNG' },
     { id: 'jpeg', label: 'JPEG' },
-    { id: 'psd', label: 'PSD', isPremium: true },
-    { id: 'tiff', label: 'TIFF', isPremium: true },
+    { id: 'psd', label: 'PSD' },
+    { id: 'tiff', label: 'TIFF' },
     { id: 'svg', label: 'SVG', isPremium: true },
   ];
 
-const RESOLUTIONS = [
-  { label: '720×1440 (Canvas Default)', width: 720, height: 1440 },
-  { label: 'Original Size', width: 0, height: 0 },
-  { label: '1080×1080 (Instagram)', width: 1080, height: 1080 },
-  { label: '1080×1920 (Story)', width: 1080, height: 1920 },
-  { label: '2048×2048 (High Quality)', width: 2048, height: 2048 },
-  { label: '4096×4096 (Print)', width: 4096, height: 4096, isPremium: true },
-  { label: '7680×4320 (8K)', width: 7680, height: 4320, isPremium: true },
+const RESOLUTIONS: ResolutionPreset[] = [
+  { label: '2160×3840 (4K UHD / 2160p)', width: 2160, height: 3840 },
+  { label: '1440×2560 (QHD / 1440p)', width: 1440, height: 2560 },
+  { label: '1080×1920 (Full HD / 1080p)', width: 1080, height: 1920 },
+  { label: '900×1600 (HD+ / 900p)', width: 900, height: 1600 },
+  { label: '720×1280 (HD / 720p)', width: 720, height: 1280 },
+  { label: '480×854 (SD / 480p)', width: 480, height: 854 },
+  { label: 'Original Size' },
 ];
+
+const resolveDimensions = (
+  preset: ResolutionPreset,
+  fallbackWidth: number,
+  fallbackHeight: number,
+) => {
+  const width =
+    typeof preset.width === 'number' ? preset.width : fallbackWidth;
+  const height =
+    typeof preset.height === 'number' ? preset.height : fallbackHeight;
+  return { width, height };
+};
 
 export const ExportModal: React.FC<ExportModalProps> = ({
   visible,
@@ -57,6 +78,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   onExport,
   onSaveToGallery,
   isPremiumUser,
+  artworkWidth,
+  artworkHeight,
 }) => {
   const [format, setFormat] = useState<ExportFormat>('png');
   const [quality, setQuality] = useState(90);
@@ -65,8 +88,18 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     `artwork_${new Date().toISOString().split('T')[0]}`,
   );
   const [selectedResolution, setSelectedResolution] = useState(0);
+  const [resolutionPickerOpen, setResolutionPickerOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+
+  const safeArtworkWidth =
+    Number.isFinite(artworkWidth) && artworkWidth > 0
+      ? Math.round(artworkWidth)
+      : 1080;
+  const safeArtworkHeight =
+    Number.isFinite(artworkHeight) && artworkHeight > 0
+      ? Math.round(artworkHeight)
+      : 1080;
 
   const translateY = useSharedValue(MODAL_HEIGHT);
   const backdropOpacity = useSharedValue(0);
@@ -78,6 +111,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     } else {
       translateY.value = withSpring(MODAL_HEIGHT);
       backdropOpacity.value = withTiming(0, { duration: 300 });
+    }
+  }, [visible]);
+
+  React.useEffect(() => {
+    if (!visible) {
+      setResolutionPickerOpen(false);
     }
   }, [visible]);
 
@@ -94,10 +133,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     return {
       format,
       quality: format === 'jpeg' ? quality : undefined,
-      preserveTransparency: format === 'png' ? preserveTransparency : false,
+      preserveTransparency:
+        format === 'png' ? preserveTransparency : undefined,
       filename,
-      width: resolution.width || undefined,
-      height: resolution.height || undefined,
+      width:
+        typeof resolution.width === 'number' ? resolution.width : undefined,
+      height:
+        typeof resolution.height === 'number' ? resolution.height : undefined,
     };
   };
 
@@ -135,8 +177,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   const estimatedFileSize = React.useMemo(() => {
     const resolution = RESOLUTIONS[selectedResolution];
-    const width = resolution.width || 1080;
-    const height = resolution.height || 1080;
+    const { width, height } = resolveDimensions(
+      resolution,
+      safeArtworkWidth,
+      safeArtworkHeight,
+    );
     const pixels = width * height;
 
     let size = 0;
@@ -155,7 +200,39 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       return `~${(size / 1024).toFixed(0)} KB`;
     }
     return `~${(size / (1024 * 1024)).toFixed(1)} MB`;
-  }, [format, quality, selectedResolution]);
+  }, [
+    format,
+    quality,
+    selectedResolution,
+    safeArtworkWidth,
+    safeArtworkHeight,
+  ]);
+
+  const currentDimensions = React.useMemo(
+    () =>
+      resolveDimensions(
+        RESOLUTIONS[selectedResolution],
+        safeArtworkWidth,
+        safeArtworkHeight,
+      ),
+    [selectedResolution, safeArtworkWidth, safeArtworkHeight],
+  );
+
+  const toggleResolutionPicker = () => {
+    setResolutionPickerOpen(prev => !prev);
+  };
+
+  const handleResolutionSelect = (index: number) => {
+    const preset = RESOLUTIONS[index];
+    if (preset?.isPremium && !isPremiumUser) {
+      return;
+    }
+    setSelectedResolution(index);
+    setResolutionPickerOpen(false);
+  };
+
+  const selectedResolutionLabel =
+    RESOLUTIONS[selectedResolution]?.label ?? 'Custom';
 
   if (!visible) return null;
 
@@ -265,45 +342,69 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             {/* Resolution */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Resolution</Text>
-              {RESOLUTIONS.map((res, index) => {
-                const isLocked = res.isPremium && !isPremiumUser;
-                const isSelected = selectedResolution === index;
-
-                return (
-                  <TouchableOpacity
-                    key={index}
-                    style={[
-                      styles.resolutionOption,
-                      isSelected && styles.resolutionOptionSelected,
-                    ]}
-                    onPress={() => !isLocked && setSelectedResolution(index)}
-                    disabled={isLocked}
-                  >
-                    <View style={styles.resolutionInfo}>
-                      <Text
-                        style={[
-                          styles.resolutionLabel,
-                          isLocked && styles.resolutionLabelLocked,
-                        ]}
-                      >
-                        {res.label}
-                      </Text>
-                      {res.isPremium && (
-                        <View style={styles.premiumBadgeSmall}>
-                          <Text style={styles.premiumBadgeText}>PRO</Text>
-                        </View>
-                      )}
-                    </View>
-                    {isSelected && (
-                      <Icon
-                        name="check"
-                        size={20}
-                        color={colors.primary.blue}
-                      />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+              <View style={styles.resolutionPickerContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.resolutionDropdown,
+                    resolutionPickerOpen && styles.resolutionDropdownOpen,
+                  ]}
+                  onPress={toggleResolutionPicker}
+                  activeOpacity={0.9}
+                >
+                  <Text style={styles.resolutionDropdownText}>
+                    {selectedResolutionLabel}
+                  </Text>
+                  <Icon
+                    name={resolutionPickerOpen ? 'chevron-up' : 'chevron-down'}
+                    size={20}
+                    color={colors.primary.blue}
+                  />
+                </TouchableOpacity>
+                {resolutionPickerOpen && (
+                  <View style={styles.resolutionList}>
+                    {RESOLUTIONS.map((res, index) => {
+                      const isLocked = res.isPremium && !isPremiumUser;
+                      const isSelected = selectedResolution === index;
+                      return (
+                        <TouchableOpacity
+                          key={index}
+                          style={[
+                            styles.resolutionOption,
+                            isSelected && styles.resolutionOptionSelected,
+                            index !== RESOLUTIONS.length - 1 &&
+                              styles.resolutionOptionDivider,
+                          ]}
+                          onPress={() => !isLocked && handleResolutionSelect(index)}
+                          disabled={isLocked}
+                        >
+                          <View style={styles.resolutionInfo}>
+                            <Text
+                              style={[
+                                styles.resolutionLabel,
+                                isLocked && styles.resolutionLabelLocked,
+                              ]}
+                            >
+                              {res.label}
+                            </Text>
+                            {res.isPremium && (
+                              <View style={styles.premiumBadgeSmall}>
+                                <Text style={styles.premiumBadgeText}>PRO</Text>
+                              </View>
+                            )}
+                          </View>
+                          {isSelected && (
+                            <Icon
+                              name="check"
+                              size={20}
+                              color={colors.primary.blue}
+                            />
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
             </View>
 
             {/* Filename */}
@@ -324,9 +425,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 Estimated size: {estimatedFileSize}
               </Text>
               <Text style={styles.fileInfoText}>
-                Dimensions:{' '}
-                {RESOLUTIONS[selectedResolution].width || 'Original'} ×{' '}
-                {RESOLUTIONS[selectedResolution].height || 'Original'}
+                Dimensions: {currentDimensions.width} ×{' '}
+                {currentDimensions.height}
               </Text>
             </View>
           </ScrollView>
@@ -501,19 +601,60 @@ const styles = StyleSheet.create({
     color: 'rgba(0,0,0,0.6)',
     textAlign: 'right',
   },
+  resolutionPickerContainer: {
+    position: 'relative',
+    marginTop: 8,
+  },
+  resolutionDropdown: {
+    borderWidth: 2,
+    borderColor: 'rgba(0,0,0,0.08)',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(0,0,0,0.03)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  resolutionDropdownOpen: {
+    borderColor: colors.primary.blue,
+    backgroundColor: 'rgba(102,126,234,0.12)',
+  },
+  resolutionDropdownText: {
+    ...typography.body,
+    color: colors.text.dark,
+    fontWeight: '600',
+  },
+  resolutionList: {
+    position: 'absolute',
+    bottom: '100%',
+    width: '100%',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: colors.background.light,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
   resolutionOption: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 0,
     backgroundColor: 'rgba(0,0,0,0.05)',
-    marginBottom: 8,
   },
   resolutionOptionSelected: {
-    backgroundColor: 'rgba(102,126,234,0.1)',
-    borderWidth: 2,
-    borderColor: colors.primary.blue,
+    backgroundColor: 'rgba(102,126,234,0.12)',
+  },
+  resolutionOptionDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   resolutionInfo: {
     flexDirection: 'row',
