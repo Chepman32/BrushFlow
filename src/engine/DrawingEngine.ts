@@ -21,6 +21,8 @@ export class DrawingEngine {
     this.currentPath = Skia.Path.Make();
     this.currentPoints = [point];
     this.currentPath.moveTo(point.x, point.y);
+    // Add a small line to make single taps visible
+    this.currentPath.lineTo(point.x + 0.1, point.y + 0.1);
 
     // Configure paint
     const colorValue = Skia.Color(color);
@@ -35,7 +37,10 @@ export class DrawingEngine {
 
     this.currentPoints.push(point);
 
-    if (this.currentPoints.length >= 2) {
+    if (this.currentPoints.length === 2) {
+      // For the first line segment, just draw a line
+      this.currentPath.lineTo(point.x, point.y);
+    } else if (this.currentPoints.length > 2) {
       const prevPoint = this.currentPoints[this.currentPoints.length - 2];
 
       // Use quadratic bezier for smoother curves

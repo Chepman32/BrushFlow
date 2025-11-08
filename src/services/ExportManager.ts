@@ -8,6 +8,7 @@ import {
   StrokeJoin,
   ColorType,
   AlphaType,
+  ImageFormat,
 } from '@shopify/react-native-skia';
 import { Buffer } from 'buffer';
 import {
@@ -396,13 +397,13 @@ export class ExportManager {
     switch (options.format) {
       case 'png': {
         filePath = `${exportDir}/${filename}.png`;
-        data = image.encodeToBytes(Skia.ImageFormat.PNG);
+        data = image.encodeToBytes(ImageFormat.PNG);
         break;
       }
       case 'jpeg': {
         filePath = `${exportDir}/${filename}.jpg`;
         const quality = Math.min(100, Math.max(1, options.quality ?? 90));
-        data = image.encodeToBytes(Skia.ImageFormat.JPEG, quality);
+        data = image.encodeToBytes(ImageFormat.JPEG, quality);
         break;
       }
       case 'svg':

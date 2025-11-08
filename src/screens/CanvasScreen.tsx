@@ -7,6 +7,7 @@ import {
   StatusBar,
   BackHandler,
   Alert,
+  PanResponder,
 } from 'react-native';
 import { Canvas, Path, Skia } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
@@ -110,7 +111,7 @@ export const CanvasScreen: React.FC = () => {
   });
   const [primaryColor, setPrimaryColor] = useState('#000000');
   const [secondaryColor, setSecondaryColor] = useState('#FFFFFF');
-  const [layers, setLayers] = useState<CanvasLayer[]>(() => [
+  const initialLayers: CanvasLayer[] = [
     {
       id: '1',
       name: 'Layer 1',
@@ -124,7 +125,9 @@ export const CanvasScreen: React.FC = () => {
       width: DEFAULT_ARTWORK_RESOLUTION.width,
       height: DEFAULT_ARTWORK_RESOLUTION.height,
     },
-  ]);
+  ];
+  const [layers, setLayers] = useState<CanvasLayer[]>(initialLayers);
+  const layersRef = useRef<CanvasLayer[]>(initialLayers);
   const [selectedLayerId, setSelectedLayerId] = useState('1');
   const [currentStroke, setCurrentStroke] = useState<DrawnStroke | null>(null);
   const currentStrokeRef = useRef<DrawnStroke | null>(null);
@@ -133,6 +136,7 @@ export const CanvasScreen: React.FC = () => {
   const hasExistingFileRef = useRef<boolean>(Boolean(route.params?.artworkId));
   const [artworkCreatedAt, setArtworkCreatedAt] = useState(new Date());
   const hasSyncedInitialArtworkRef = useRef(false);
+  const hasInitializedUndoRef = useRef(false);
 
   const buildArtworkPayload = (latestLayers?: CanvasLayer[]): Artwork =>
     ({
@@ -213,6 +217,7 @@ export const CanvasScreen: React.FC = () => {
           if (reconstructedLayers.length > 0) {
             setSelectedLayerId(reconstructedLayers[0].id);
           }
+          hasInitializedUndoRef.current = false;
         } catch (error) {
           console.error('Failed to load artwork:', error);
         }
@@ -262,6 +267,14 @@ export const CanvasScreen: React.FC = () => {
     }
   }, [layers, artworkName, artworkCreatedAt, isLoading]);
 
+  useEffect(() => {
+    layersRef.current = layers;
+    if (!hasInitializedUndoRef.current && layers.length > 0) {
+      undoRedoManager.initialize(layers);
+      hasInitializedUndoRef.current = true;
+    }
+  }, [layers, undoRedoManager]);
+
   useFocusEffect(
     React.useCallback(() => {
       const onBackPress = () => {
@@ -292,13 +305,16 @@ export const CanvasScreen: React.FC = () => {
   }, [isFullscreen]);
 
   // Drawing gesture handlers
-  const handleDrawStart = (x: number, y: number) => {
+  const handleDrawStart = React.useCallback((x: number, y: number) => {
+    console.log('🎨 Draw start:', x, y, 'tool:', selectedTool);
     if (selectedTool !== 'brush' && selectedTool !== 'pencil') {
+      console.log('⚠️ Not brush/pencil tool');
       return;
     }
 
-    const activeLayer = layers.find(layer => layer.id === selectedLayerId);
+    const activeLayer = layersRef.current.find(layer => layer.id === selectedLayerId);
     if (!activeLayer || activeLayer.locked || !activeLayer.visible) {
+      console.log('⚠️ Layer issue - locked/invisible/missing');
       currentStrokeRef.current = null;
       setCurrentStroke(null);
       return;
@@ -316,6 +332,7 @@ export const CanvasScreen: React.FC = () => {
     drawingEngine.startStroke({ x, y }, primaryColor, strokeWidth, strokeOpacity);
 
     const path = drawingEngine.getCurrentPath();
+    console.log('📍 Path created:', path ? 'YES' : 'NO');
     if (path) {
       const strokeId = createStrokeId();
       const newStroke: DrawnStroke = {
@@ -330,12 +347,13 @@ export const CanvasScreen: React.FC = () => {
         strokeCap: currentBrushConfig.strokeCap,
         strokeJoin: currentBrushConfig.strokeJoin,
       };
+      console.log('✅ Stroke created:', strokeId, 'width:', strokeWidth, 'color:', primaryColor);
       currentStrokeRef.current = newStroke;
       setCurrentStroke(newStroke);
     }
-  };
+  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor]);
 
-  const handleDrawUpdate = (x: number, y: number) => {
+  const handleDrawUpdate = React.useCallback((x: number, y: number) => {
     if (!currentStrokeRef.current) {
       return;
     }
@@ -352,9 +370,9 @@ export const CanvasScreen: React.FC = () => {
       currentStrokeRef.current = updatedStroke;
       setCurrentStroke(updatedStroke);
     }
-  };
+  }, [drawingEngine]);
 
-  const handleDrawEnd = () => {
+  const handleDrawEnd = React.useCallback(() => {
     const baseStroke = currentStrokeRef.current;
     const path = drawingEngine.getCurrentPath();
 
@@ -398,19 +416,32 @@ export const CanvasScreen: React.FC = () => {
 
     currentStrokeRef.current = null;
     setCurrentStroke(null);
-  };
+  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager]);
 
-  // Drawing gesture with runOnJS
-  const panGesture = Gesture.Pan()
-    .onStart(event => {
-      runOnJS(handleDrawStart)(event.x, event.y);
-    })
-    .onUpdate(event => {
-      runOnJS(handleDrawUpdate)(event.x, event.y);
-    })
-    .onEnd(() => {
-      runOnJS(handleDrawEnd)();
-    });
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: evt =>
+          evt.nativeEvent.touches.length === 1,
+        onMoveShouldSetPanResponder: evt =>
+          evt.nativeEvent.touches.length === 1,
+        onPanResponderGrant: evt => {
+          const { locationX, locationY } = evt.nativeEvent;
+          handleDrawStart(locationX, locationY);
+        },
+        onPanResponderMove: evt => {
+          const { locationX, locationY } = evt.nativeEvent;
+          handleDrawUpdate(locationX, locationY);
+        },
+        onPanResponderRelease: () => {
+          handleDrawEnd();
+        },
+        onPanResponderTerminate: () => {
+          handleDrawEnd();
+        },
+      }),
+    [handleDrawStart, handleDrawUpdate, handleDrawEnd],
+  );
 
   // Three-finger gestures for undo/redo
   const threeFingerGesture = Gesture.Pan()
@@ -418,9 +449,9 @@ export const CanvasScreen: React.FC = () => {
     .maxPointers(3)
     .onEnd(event => {
       if (event.translationY > 60) {
-        handleUndo();
+        runOnJS(handleUndo)();
       } else if (event.translationY < -60) {
-        handleRedo();
+        runOnJS(handleRedo)();
       }
     });
 
@@ -676,7 +707,8 @@ export const CanvasScreen: React.FC = () => {
   );
 
   return (
-    <GestureHandlerRootView style={styles.container}>
+    <GestureDetector gesture={threeFingerGesture}>
+      <GestureHandlerRootView style={styles.container}>
       <StatusBar hidden={isFullscreen} animated />
       {!isFullscreen ? (
         <View
@@ -768,49 +800,50 @@ export const CanvasScreen: React.FC = () => {
       )}
 
       {/* Canvas */}
-      <GestureDetector
-        gesture={Gesture.Simultaneous(panGesture, threeFingerGesture)}
-      >
-        <View style={styles.canvasContainer}>
-          <Canvas style={styles.canvas}>
-            {/* Render all layers */}
-            {layers.map(layer => {
-              if (!layer.visible) {
+      <View style={styles.canvasContainer} {...panResponder.panHandlers}>
+        <Canvas style={styles.canvas}>
+          {/* Render all layers */}
+          {(() => {
+            const allStrokes = layers.flatMap(layer => {
+              if (!layer.visible) return [];
+              return layer.strokes.map(stroke => ({ ...stroke, layerOpacity: layer.opacity }));
+            });
+            console.log('🖼️ Rendering strokes:', allStrokes.length);
+
+            return allStrokes.map(stroke => {
+              if (!stroke.path) {
+                console.log('⚠️ Stroke missing path:', stroke.id);
                 return null;
               }
+              return (
+                <Path
+                  key={stroke.id}
+                  path={stroke.path}
+                  color={stroke.color}
+                  style="stroke"
+                  strokeWidth={stroke.strokeWidth}
+                  opacity={stroke.layerOpacity * stroke.opacity}
+                  strokeCap={stroke.strokeCap || 'round'}
+                  strokeJoin={stroke.strokeJoin || 'round'}
+                />
+              );
+            });
+          })()}
 
-              return layer.strokes.map(stroke => {
-                if (!stroke.path) return null;
-                return (
-                  <Path
-                    key={stroke.id}
-                    path={stroke.path}
-                    color={stroke.color}
-                    style="stroke"
-                    strokeWidth={stroke.strokeWidth}
-                    opacity={layer.opacity * stroke.opacity}
-                    strokeCap={stroke.strokeCap || 'round'}
-                    strokeJoin={stroke.strokeJoin || 'round'}
-                  />
-                );
-              });
-            })}
-
-            {/* Current stroke preview */}
-            {currentStroke && (
-              <Path
-                path={currentStroke.path}
-                color={currentStroke.color}
-                style="stroke"
-                strokeWidth={currentStroke.strokeWidth}
-                opacity={currentStrokeLayerOpacity * currentStroke.opacity}
-                strokeCap={currentStroke.strokeCap || 'round'}
-                strokeJoin={currentStroke.strokeJoin || 'round'}
-              />
-            )}
-          </Canvas>
-        </View>
-      </GestureDetector>
+          {/* Current stroke preview */}
+          {currentStroke && (
+            <Path
+              path={currentStroke.path}
+              color={currentStroke.color}
+              style="stroke"
+              strokeWidth={currentStroke.strokeWidth}
+              opacity={currentStrokeLayerOpacity * currentStroke.opacity}
+              strokeCap={currentStroke.strokeCap || 'round'}
+              strokeJoin={currentStroke.strokeJoin || 'round'}
+            />
+          )}
+        </Canvas>
+      </View>
 
       {/* Tool Panel */}
       {!isFullscreen && (
@@ -869,6 +902,7 @@ export const CanvasScreen: React.FC = () => {
         artworkHeight={artworkResolution.height}
       />
     </GestureHandlerRootView>
+  </GestureDetector>
   );
 };
 

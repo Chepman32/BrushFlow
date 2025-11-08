@@ -25,6 +25,16 @@ export class UndoRedoManager {
     this.trimStack(this.undoStack);
   }
 
+  initialize(initialLayers: Layer[]): void {
+    const snapshot: CanvasState = {
+      layers: this.deepCloneLayers(initialLayers),
+      timestamp: Date.now(),
+    };
+
+    this.undoStack = [snapshot];
+    this.redoStack = [];
+  }
+
   saveState(layers: Layer[]): void {
     const state: CanvasState = {
       layers: this.deepCloneLayers(layers),
@@ -39,7 +49,7 @@ export class UndoRedoManager {
   }
 
   undo(): Layer[] | null {
-    if (this.undoStack.length === 0) {
+    if (this.undoStack.length <= 1) {
       return null;
     }
 
@@ -48,13 +58,9 @@ export class UndoRedoManager {
     this.trimStack(this.redoStack);
 
     // Return the previous state (or empty if no more states)
-    if (this.undoStack.length > 0) {
-      return this.deepCloneLayers(
-        this.undoStack[this.undoStack.length - 1].layers,
-      );
-    }
-
-    return [];
+    return this.deepCloneLayers(
+      this.undoStack[this.undoStack.length - 1].layers,
+    );
   }
 
   redo(): Layer[] | null {
@@ -70,7 +76,7 @@ export class UndoRedoManager {
   }
 
   canUndo(): boolean {
-    return this.undoStack.length > 0;
+    return this.undoStack.length > 1;
   }
 
   canRedo(): boolean {
