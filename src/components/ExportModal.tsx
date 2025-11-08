@@ -341,69 +341,23 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             {/* Resolution */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Resolution</Text>
-              <View style={styles.resolutionPickerContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.resolutionDropdown,
-                    resolutionPickerOpen && styles.resolutionDropdownOpen,
-                  ]}
-                  onPress={toggleResolutionPicker}
-                  activeOpacity={0.9}
-                >
-                  <Text style={styles.resolutionDropdownText}>
-                    {selectedResolutionLabel}
-                  </Text>
-                  <Icon
-                    name={resolutionPickerOpen ? 'chevron-up' : 'chevron-down'}
-                    size={20}
-                    color={colors.primary.blue}
-                  />
-                </TouchableOpacity>
-                {resolutionPickerOpen && (
-                  <View style={styles.resolutionList}>
-                    {RESOLUTIONS.map((res, index) => {
-                      const isLocked = res.isPremium && !isPremiumUser;
-                      const isSelected = selectedResolution === index;
-                      return (
-                        <TouchableOpacity
-                          key={index}
-                          style={[
-                            styles.resolutionOption,
-                            isSelected && styles.resolutionOptionSelected,
-                            index !== RESOLUTIONS.length - 1 &&
-                              styles.resolutionOptionDivider,
-                          ]}
-                          onPress={() => !isLocked && handleResolutionSelect(index)}
-                          disabled={isLocked}
-                        >
-                          <View style={styles.resolutionInfo}>
-                            <Text
-                              style={[
-                                styles.resolutionLabel,
-                                isLocked && styles.resolutionLabelLocked,
-                              ]}
-                            >
-                              {res.label}
-                            </Text>
-                            {res.isPremium && (
-                              <View style={styles.premiumBadgeSmall}>
-                                <Text style={styles.premiumBadgeText}>PRO</Text>
-                              </View>
-                            )}
-                          </View>
-                          {isSelected && (
-                            <Icon
-                              name="check"
-                              size={20}
-                              color={colors.primary.blue}
-                            />
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-              </View>
+              <TouchableOpacity
+                style={[
+                  styles.resolutionDropdown,
+                  resolutionPickerOpen && styles.resolutionDropdownOpen,
+                ]}
+                onPress={toggleResolutionPicker}
+                activeOpacity={0.9}
+              >
+                <Text style={styles.resolutionDropdownText}>
+                  {selectedResolutionLabel}
+                </Text>
+                <Icon
+                  name={resolutionPickerOpen ? 'chevron-up' : 'chevron-down'}
+                  size={20}
+                  color={colors.primary.blue}
+                />
+              </TouchableOpacity>
             </View>
 
             {/* Filename */}
@@ -429,6 +383,74 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               </Text>
             </View>
           </ScrollView>
+
+          {/* Resolution Picker Overlay */}
+          {resolutionPickerOpen && (
+            <View style={styles.resolutionPickerOverlay}>
+              <TouchableOpacity
+                style={styles.resolutionPickerBackdrop}
+                activeOpacity={1}
+                onPress={() => setResolutionPickerOpen(false)}
+              />
+              <View style={styles.resolutionListContainer}>
+                <View style={styles.resolutionListHeader}>
+                  <Text style={styles.resolutionListTitle}>Select Resolution</Text>
+                  <TouchableOpacity
+                    onPress={() => setResolutionPickerOpen(false)}
+                    style={styles.resolutionCloseButton}
+                  >
+                    <Icon name="x" size={24} color={colors.text.dark} />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView
+                  style={styles.resolutionScrollView}
+                  showsVerticalScrollIndicator={true}
+                  bounces={false}
+                >
+                  {RESOLUTIONS.map((res, index) => {
+                    const isLocked = res.isPremium && !isPremiumUser;
+                    const isSelected = selectedResolution === index;
+                    return (
+                      <TouchableOpacity
+                        key={index}
+                        style={[
+                          styles.resolutionOption,
+                          isSelected && styles.resolutionOptionSelected,
+                          index !== RESOLUTIONS.length - 1 &&
+                            styles.resolutionOptionDivider,
+                        ]}
+                        onPress={() => !isLocked && handleResolutionSelect(index)}
+                        disabled={isLocked}
+                      >
+                        <View style={styles.resolutionInfo}>
+                          <Text
+                            style={[
+                              styles.resolutionLabel,
+                              isLocked && styles.resolutionLabelLocked,
+                            ]}
+                          >
+                            {res.label}
+                          </Text>
+                          {res.isPremium && (
+                            <View style={styles.premiumBadgeSmall}>
+                              <Text style={styles.premiumBadgeText}>PRO</Text>
+                            </View>
+                          )}
+                        </View>
+                        {isSelected && (
+                          <Icon
+                            name="check"
+                            size={20}
+                            color={colors.primary.blue}
+                          />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            </View>
+          )}
 
           {/* Export Buttons */}
           <View style={styles.footer}>
@@ -600,10 +622,6 @@ const styles = StyleSheet.create({
     color: 'rgba(0,0,0,0.6)',
     textAlign: 'right',
   },
-  resolutionPickerContainer: {
-    position: 'relative',
-    marginTop: 8,
-  },
   resolutionDropdown: {
     borderWidth: 2,
     borderColor: 'rgba(0,0,0,0.08)',
@@ -614,6 +632,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginTop: 8,
   },
   resolutionDropdownOpen: {
     borderColor: colors.primary.blue,
@@ -624,21 +643,49 @@ const styles = StyleSheet.create({
     color: colors.text.dark,
     fontWeight: '600',
   },
-  resolutionList: {
-    position: 'absolute',
-    bottom: '100%',
+  resolutionPickerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  resolutionPickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  resolutionListContainer: {
     width: '100%',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.1)',
-    borderRadius: 16,
-    overflow: 'hidden',
+    maxHeight: MODAL_HEIGHT * 0.6,
     backgroundColor: colors.background.light,
+    borderRadius: 20,
+    overflow: 'hidden',
     shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 12,
+  },
+  resolutionListHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  resolutionListTitle: {
+    ...typography.body,
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.text.dark,
+  },
+  resolutionCloseButton: {
+    padding: 4,
+  },
+  resolutionScrollView: {
+    maxHeight: MODAL_HEIGHT * 0.5,
   },
   resolutionOption: {
     flexDirection: 'row',
