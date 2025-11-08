@@ -9,3 +9,4 @@ export { HapticManager } from './HapticManager';
 export { AutoSaveManager } from './AutoSaveManager';
 export { ExportManager } from './ExportManager';
 export { TrashCleanupService } from './TrashCleanupService';
+export { ProjectManager } from './ProjectManager';

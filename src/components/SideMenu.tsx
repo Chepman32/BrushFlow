@@ -32,12 +32,30 @@ interface MenuItem {
   isPremium?: boolean;
 }
 
+interface ProjectMenuItem {
+  id: string;
+  label: string;
+  count?: number;
+  isDefault?: boolean;
+}
+
+interface ProjectsSectionProps {
+  items: ProjectMenuItem[];
+  selectedId: string;
+  expanded: boolean;
+  onToggle: () => void;
+  onSelect: (projectId: string) => void;
+  onAddProject: () => void;
+  onItemOptions?: (projectId: string) => void;
+}
+
 interface SideMenuProps {
   visible: boolean;
   onClose: () => void;
   isPremiumUser: boolean;
   userName?: string;
   menuItems: MenuItem[];
+  projectsSection?: ProjectsSectionProps;
 }
 
 export const SideMenu: React.FC<SideMenuProps> = ({
@@ -46,6 +64,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
   isPremiumUser,
   userName = 'Creative Artist',
   menuItems,
+  projectsSection,
 }) => {
   const insets = useSafeAreaInsets();
   const translateX = useSharedValue(-MENU_WIDTH);
@@ -134,6 +153,72 @@ export const SideMenu: React.FC<SideMenuProps> = ({
                 </View>
               )}
             </View>
+
+            {/* Projects Section */}
+            {projectsSection ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <TouchableOpacity
+                    style={styles.sectionHeaderLeft}
+                    onPress={projectsSection.onToggle}
+                    activeOpacity={0.7}
+                  >
+                    <Icon
+                      name={projectsSection.expanded ? 'chevron-down' : 'chevron-right'}
+                      size={18}
+                      color="rgba(255,255,255,0.7)"
+                    />
+                    <Text style={styles.sectionTitle}>Projects</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={projectsSection.onAddProject}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Icon name="plus" size={18} color="rgba(255,255,255,0.7)" />
+                  </TouchableOpacity>
+                </View>
+                {projectsSection.expanded && (
+                  <View style={styles.projectList}>
+                    {projectsSection.items.map(item => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[
+                          styles.projectRow,
+                          item.id === projectsSection.selectedId && styles.projectRowActive,
+                          item.isDefault && styles.projectRowDefault,
+                        ]}
+                        onPress={() => projectsSection.onSelect(item.id)}
+                        onLongPress={() => {
+                          if (!item.isDefault) {
+                            projectsSection.onItemOptions?.(item.id);
+                          }
+                        }}
+                        delayLongPress={250}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.projectName,
+                            item.id === projectsSection.selectedId && styles.projectNameActive,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {item.label}
+                        </Text>
+                        <View style={styles.projectCountBadge}>
+                          <Text style={styles.projectCountText}>{item.count ?? 0}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                    {!projectsSection.items.some(item => !item.isDefault) && (
+                      <Text style={styles.projectEmptyState}>
+                        Create your first project to keep things organized.
+                      </Text>
+                    )}
+                  </View>
+                )}
+              </View>
+            ) : null}
 
             {/* Menu Items */}
             <View style={styles.menuItems}>
@@ -241,6 +326,74 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.premium.gold,
     fontWeight: '700',
+  },
+  section: {
+    paddingHorizontal: 24,
+    paddingTop: 16,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sectionTitle: {
+    ...typography.caption,
+    color: 'rgba(255,255,255,0.8)',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    fontSize: 13,
+    marginLeft: 8,
+  },
+  projectList: {
+    gap: 8,
+  },
+  projectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  projectRowDefault: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  projectRowActive: {
+    backgroundColor: 'rgba(102,126,234,0.25)',
+  },
+  projectName: {
+    ...typography.body,
+    color: 'rgba(255,255,255,0.8)',
+    flex: 1,
+    marginRight: 12,
+  },
+  projectNameActive: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  projectCountBadge: {
+    minWidth: 32,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+  },
+  projectCountText: {
+    ...typography.caption,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  projectEmptyState: {
+    ...typography.caption,
+    color: 'rgba(255,255,255,0.5)',
+    marginTop: 8,
   },
   menuItems: {
     flex: 1,

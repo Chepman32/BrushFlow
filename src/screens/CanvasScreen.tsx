@@ -132,6 +132,9 @@ export const CanvasScreen: React.FC = () => {
   const [currentStroke, setCurrentStroke] = useState<DrawnStroke | null>(null);
   const currentStrokeRef = useRef<DrawnStroke | null>(null);
   const [artworkName, setArtworkName] = useState('Untitled Artwork');
+  const [artworkProjectId, setArtworkProjectId] = useState<string | null>(
+    route.params?.projectId ?? null,
+  );
   const artworkIdRef = useRef(route.params?.artworkId || createArtworkId());
   const hasExistingFileRef = useRef<boolean>(Boolean(route.params?.artworkId));
   const [artworkCreatedAt, setArtworkCreatedAt] = useState(new Date());
@@ -142,6 +145,7 @@ export const CanvasScreen: React.FC = () => {
     ({
       id: artworkIdRef.current,
       name: artworkName,
+      projectId: artworkProjectId,
       width: artworkResolution.width,
       height: artworkResolution.height,
       viewportWidth: artworkViewport.width,
@@ -184,6 +188,7 @@ export const CanvasScreen: React.FC = () => {
         try {
           const loadedArtwork = await fileManager.loadArtwork(artworkId);
           setArtworkName(loadedArtwork.name);
+          setArtworkProjectId(loadedArtwork.projectId ?? null);
           artworkIdRef.current = loadedArtwork.id;
           hasExistingFileRef.current = true;
           setArtworkCreatedAt(loadedArtwork.createdAt);

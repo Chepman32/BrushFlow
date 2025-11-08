@@ -49,6 +49,7 @@ export interface Artwork {
   name: string;
   createdAt: Date;
   modifiedAt: Date;
+  projectId?: string | null;
   width: number;
   height: number;
   viewportWidth?: number;
@@ -63,6 +64,7 @@ export interface ArtworkMetadata {
   name: string;
   createdAt: Date;
   modifiedAt: Date;
+  projectId?: string | null;
   width: number;
   height: number;
   layerCount: number;

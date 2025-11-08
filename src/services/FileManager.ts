@@ -60,6 +60,7 @@ export class FileManager {
     const serializableArtwork = this.prepareArtworkForSerialization(artwork);
     const data = JSON.stringify({
       ...serializableArtwork,
+      projectId: artwork.projectId ?? null,
       createdAt: artwork.createdAt.toISOString(),
       modifiedAt: artwork.modifiedAt.toISOString(),
     });
@@ -82,6 +83,7 @@ export class FileManager {
       ...parsed,
       createdAt: new Date(parsed.createdAt),
       modifiedAt: new Date(parsed.modifiedAt),
+      projectId: parsed.projectId ?? null,
     };
   }
 
@@ -110,6 +112,7 @@ export class FileManager {
       name: artwork.name,
       createdAt: artwork.createdAt,
       modifiedAt: artwork.modifiedAt,
+      projectId: artwork.projectId ?? null,
       width: artwork.width,
       height: artwork.height,
       layerCount: artwork.layers.length,
@@ -305,6 +308,7 @@ export class FileManager {
           name: artwork.name,
           createdAt: new Date(artwork.createdAt),
           modifiedAt: new Date(artwork.modifiedAt),
+          projectId: artwork.projectId ?? null,
           width: artwork.width,
           height: artwork.height,
           layerCount: artwork.layers.length,
@@ -319,6 +323,64 @@ export class FileManager {
     return metadataList.sort(
       (a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime(),
     );
+  }
+
+  async updateArtworkProject(id: string, projectId: string | null): Promise<void> {
+    await this.ensureCoreDirectories();
+    const artworkPath = await this.resolveArtworkFilePath(id);
+    if (!artworkPath) {
+      throw new Error('Artwork not found');
+    }
+
+    const raw = await RNFS.readFile(artworkPath, 'utf8');
+    const artwork = JSON.parse(raw);
+    artwork.projectId = projectId ?? null;
+    artwork.modifiedAt = new Date().toISOString();
+
+    await RNFS.writeFile(artworkPath, JSON.stringify(artwork), 'utf8');
+  }
+
+  async duplicateArtwork(
+    sourceArtworkId: string,
+    options?: { targetProjectId?: string | null; name?: string },
+  ): Promise<ArtworkMetadata> {
+    await this.ensureCoreDirectories();
+    const originalArtwork = await this.loadArtwork(sourceArtworkId);
+    const duplicateId = this.generateArtworkId();
+    const now = new Date();
+
+    const duplicatedArtwork: Artwork = {
+      ...originalArtwork,
+      id: duplicateId,
+      name: options?.name ?? `${originalArtwork.name} Copy`,
+      createdAt: now,
+      modifiedAt: now,
+      projectId:
+        options?.targetProjectId !== undefined
+          ? options.targetProjectId
+          : originalArtwork.projectId ?? null,
+    };
+
+    await this.saveArtwork(duplicatedArtwork, `${duplicateId}.bflow`);
+
+    const sourceThumbnailPath = `${THUMBNAILS_DIR}/thumb-${sourceArtworkId}.jpg`;
+    const duplicateThumbnailPath = `${THUMBNAILS_DIR}/thumb-${duplicateId}.jpg`;
+    const sourceThumbnailExists = await RNFS.exists(sourceThumbnailPath);
+    if (sourceThumbnailExists) {
+      await RNFS.copyFile(sourceThumbnailPath, duplicateThumbnailPath);
+    }
+
+    return {
+      id: duplicateId,
+      name: duplicatedArtwork.name,
+      createdAt: duplicatedArtwork.createdAt,
+      modifiedAt: duplicatedArtwork.modifiedAt,
+      projectId: duplicatedArtwork.projectId ?? null,
+      width: duplicatedArtwork.width,
+      height: duplicatedArtwork.height,
+      layerCount: duplicatedArtwork.layers.length,
+      thumbnailPath: duplicateThumbnailPath,
+    };
   }
 
   async generateThumbnail(artwork: Artwork): Promise<string> {
@@ -453,6 +515,10 @@ export class FileManager {
         };
       }),
     };
+  }
+
+  private generateArtworkId(): string {
+    return `art-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
   async getStorageInfo(): Promise<{ used: number; available: number }> {

@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   Dimensions,
   Image,
@@ -18,8 +19,19 @@ import {
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { DrawerNavigationProp } from '@react-navigation/drawer';
 import type { DrawerParamList } from '../navigation/types';
-import { FileManager, HapticManager, IAPManager, ExportManager } from '../services';
-import { Artwork, ArtworkMetadata } from '../types';
+import {
+  FileManager,
+  HapticManager,
+  IAPManager,
+  ExportManager,
+  ProjectManager,
+} from '../services';
+import {
+  Artwork,
+  ArtworkMetadata,
+  Project,
+  ProjectDeletionStrategy,
+} from '../types';
 import { spacing } from '../theme';
 import {
   SideMenu,
@@ -40,15 +52,30 @@ const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - spacing.lg * 3) / 2;
 
 type NavigationProp = DrawerNavigationProp<DrawerParamList, 'Gallery'>;
+type ProjectFilter = 'all' | 'unfiled' | string;
 
 // Separate component for artwork card to use hooks properly
 const ArtworkCard: React.FC<{
   item: ArtworkMetadata;
   onPress: (id: string) => void;
   onMorePress: (item: ArtworkMetadata) => void;
+  onSelectToggle: (id: string) => void;
+  onLongPressSelect: (id: string) => void;
+  isSelectionMode: boolean;
+  isSelected: boolean;
   theme: AppTheme;
   styles: ReturnType<typeof createStyles>;
-}> = ({ item, onPress, onMorePress, theme, styles }) => {
+}> = ({
+  item,
+  onPress,
+  onMorePress,
+  onSelectToggle,
+  onLongPressSelect,
+  isSelectionMode,
+  isSelected,
+  theme,
+  styles,
+}) => {
   const [thumbnailExists, setThumbnailExists] = useState(false);
   const [previewData, setPreviewData] = useState<{
     width: number;
@@ -209,15 +236,42 @@ const ArtworkCard: React.FC<{
     );
   };
 
+  const handlePress = () => {
+    if (isSelectionMode) {
+      onSelectToggle(item.id);
+    } else {
+      onPress(item.id);
+    }
+  };
+
+  const handleLongPress = () => {
+    onLongPressSelect(item.id);
+  };
+
   return (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => onPress(item.id)}
+      onPress={handlePress}
+      onLongPress={handleLongPress}
+      delayLongPress={220}
       activeOpacity={0.8}
     >
+      {isSelectionMode && (
+        <View
+          style={[
+            styles.selectionIndicator,
+            isSelected && styles.selectionIndicatorActive,
+          ]}
+        >
+          {isSelected && (
+            <Icon name="check" size={16} color={theme.isDark ? '#0E0E0E' : '#FFFFFF'} />
+          )}
+        </View>
+      )}
       <TouchableOpacity
         style={styles.moreButton}
         onPress={() => onMorePress(item)}
+        disabled={isSelectionMode}
         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
       >
         <Icon
@@ -244,10 +298,22 @@ export const GalleryScreen: React.FC = () => {
   const { theme } = useSettings();
   const { locale } = useTranslation();
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => createStyles(theme, insets.top), [theme, insets.top]);
+  const styles = useMemo(
+    () => createStyles(theme, insets.top, insets.bottom),
+    [theme, insets.top, insets.bottom],
+  );
   const palette = theme.colors;
   const [artworks, setArtworks] = useState<ArtworkMetadata[]>([]);
   const [allArtworks, setAllArtworks] = useState<ArtworkMetadata[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsExpanded, setProjectsExpanded] = useState(true);
+  const [activeProjectFilter, setActiveProjectFilter] = useState<ProjectFilter>('all');
+  const [selectedArtworkIds, setSelectedArtworkIds] = useState<string[]>([]);
+  const [transferState, setTransferState] = useState<{
+    mode: 'move' | 'copy';
+    artworkIds: string[];
+  } | null>(null);
+  const [isProcessingTransfer, setIsProcessingTransfer] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -259,10 +325,17 @@ export const GalleryScreen: React.FC = () => {
   const [selectedArtwork, setSelectedArtwork] = useState<ArtworkMetadata | null>(null);
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  const [projectEditorState, setProjectEditorState] = useState<{
+    mode: 'create' | 'rename';
+    project?: Project;
+  } | null>(null);
+  const [projectNameInput, setProjectNameInput] = useState('');
+  const [createOptionsVisible, setCreateOptionsVisible] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
 
   const hapticManager = HapticManager.getInstance();
   const iapManager = IAPManager.getInstance();
+  const projectManager = ProjectManager.getInstance();
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -278,6 +351,43 @@ export const GalleryScreen: React.FC = () => {
 
     initializeApp();
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const syncProjects = async () => {
+      try {
+        await projectManager.initialize();
+        const projectList = await projectManager.getProjects();
+        if (isMounted) {
+          setProjects(projectList);
+        }
+      } catch (error) {
+        console.error('Failed to load projects:', error);
+      }
+    };
+
+    syncProjects();
+    const unsubscribe = projectManager.subscribe(projectList => {
+      if (isMounted) {
+        setProjects(projectList);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [projectManager]);
+
+  useEffect(() => {
+    if (
+      activeProjectFilter !== 'all' &&
+      activeProjectFilter !== 'unfiled' &&
+      !projects.some(project => project.id === activeProjectFilter)
+    ) {
+      setActiveProjectFilter('all');
+    }
+  }, [projects, activeProjectFilter]);
 
   // Reload artworks when screen comes into focus
   useFocusEffect(
@@ -321,8 +431,33 @@ export const GalleryScreen: React.FC = () => {
   };
 
   const handleCreateNew = () => {
-    navigation.navigate('Canvas' as any, { artworkId: undefined });
+    const targetProjectId =
+      activeProjectFilter !== 'all' && activeProjectFilter !== 'unfiled'
+        ? activeProjectFilter
+        : undefined;
+    navigation.navigate('Canvas' as any, {
+      artworkId: undefined,
+      projectId: targetProjectId,
+    });
     hapticManager.buttonPress();
+  };
+  const openCreateOptions = () => {
+    setCreateOptionsVisible(true);
+    hapticManager.trigger('light');
+  };
+
+  const closeCreateOptions = () => {
+    setCreateOptionsVisible(false);
+  };
+
+  const handleCreateArtworkOption = () => {
+    closeCreateOptions();
+    handleCreateNew();
+  };
+
+  const handleCreateProjectOption = () => {
+    closeCreateOptions();
+    setProjectEditorState({ mode: 'create' });
   };
 
   const handleArtworkPress = (artworkId: string) => {
@@ -504,6 +639,14 @@ export const GalleryScreen: React.FC = () => {
     );
   };
 
+  const handleMoveArtworkRequest = (artwork: ArtworkMetadata) => {
+    openTransferModal('move', [artwork.id]);
+  };
+
+  const handleCopyArtworkRequest = (artwork: ArtworkMetadata) => {
+    openTransferModal('copy', [artwork.id]);
+  };
+
   const handleMoreOptions = (artwork: ArtworkMetadata) => {
     hapticManager.buttonPress();
 
@@ -511,9 +654,16 @@ export const GalleryScreen: React.FC = () => {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           title: artwork.name,
-          options: ['Cancel', 'Share', 'Rename', 'Move to Trash'],
+          options: [
+            'Cancel',
+            'Share',
+            'Rename',
+            'Move to Project',
+            'Copy to Project',
+            'Move to Trash',
+          ],
           cancelButtonIndex: 0,
-          destructiveButtonIndex: 3,
+          destructiveButtonIndex: 5,
           userInterfaceStyle: 'dark',
         },
         buttonIndex => {
@@ -522,6 +672,10 @@ export const GalleryScreen: React.FC = () => {
           } else if (buttonIndex === 2) {
             openRenameDialog(artwork);
           } else if (buttonIndex === 3) {
+            handleMoveArtworkRequest(artwork);
+          } else if (buttonIndex === 4) {
+            handleCopyArtworkRequest(artwork);
+          } else if (buttonIndex === 5) {
             confirmDeleteArtwork(artwork);
           }
         },
@@ -541,12 +695,269 @@ export const GalleryScreen: React.FC = () => {
         onPress: () => openRenameDialog(artwork),
       },
       {
+        text: 'Move to Project',
+        onPress: () => handleMoveArtworkRequest(artwork),
+      },
+      {
+        text: 'Copy to Project',
+        onPress: () => handleCopyArtworkRequest(artwork),
+      },
+      {
         text: 'Move to Trash',
         style: 'destructive',
         onPress: () => confirmDeleteArtwork(artwork),
       },
       { text: 'Cancel', style: 'cancel' },
     ]);
+  };
+
+  const toggleArtworkSelection = (artworkId: string) => {
+    setSelectedArtworkIds(prev =>
+      prev.includes(artworkId)
+        ? prev.filter(id => id !== artworkId)
+        : [...prev, artworkId],
+    );
+  };
+
+  const handleArtworkLongPressSelect = (artworkId: string) => {
+    if (isSelectionMode) {
+      toggleArtworkSelection(artworkId);
+      return;
+    }
+    setSelectedArtworkIds([artworkId]);
+    hapticManager.trigger('selection');
+  };
+
+  const clearSelection = () => {
+    setSelectedArtworkIds([]);
+  };
+
+  useEffect(() => {
+    clearSelection();
+  }, [activeProjectFilter]);
+
+  const isSelectionMode = selectedArtworkIds.length > 0;
+  const selectedArtworkSet = useMemo(
+    () => new Set(selectedArtworkIds),
+    [selectedArtworkIds],
+  );
+
+  const projectArtworkCounts = useMemo(
+    () =>
+      allArtworks.reduce<Record<string, number>>((acc, artwork) => {
+        const key = artwork.projectId ?? 'unfiled';
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {}),
+    [allArtworks],
+  );
+
+  const projectMenuItems = useMemo(
+    () => {
+      const baseItems = [
+        {
+          id: 'all',
+          label: 'All Artworks',
+          count: allArtworks.length,
+          isDefault: true,
+        },
+        {
+          id: 'unfiled',
+          label: 'Unfiled',
+          count: projectArtworkCounts['unfiled'] || 0,
+          isDefault: true,
+        },
+      ];
+
+      const userProjects = projects.map(project => ({
+        id: project.id,
+        label: project.name,
+        count: projectArtworkCounts[project.id] || 0,
+        isDefault: false,
+      }));
+
+      return [...baseItems, ...userProjects];
+    },
+    [allArtworks.length, projectArtworkCounts, projects],
+  );
+
+  const currentProjectLabel = useMemo(() => {
+    if (activeProjectFilter === 'all') {
+      return 'All Artworks';
+    }
+    if (activeProjectFilter === 'unfiled') {
+      return 'Unfiled Artworks';
+    }
+    const project = projects.find(entry => entry.id === activeProjectFilter);
+    return project ? project.name : 'All Artworks';
+  }, [activeProjectFilter, projects]);
+
+  const currentProjectCountLabel = useMemo(() => {
+    const count = artworks.length;
+    const unit = count === 1 ? 'artwork' : 'artworks';
+    return `${count} ${unit}`;
+  }, [artworks.length]);
+
+  const handleSelectProject = (projectId: string) => {
+    setActiveProjectFilter(projectId as ProjectFilter);
+    setMenuVisible(false);
+  };
+
+  const handleToggleProjectsSection = () => {
+    setProjectsExpanded(prev => !prev);
+  };
+
+  const handleCreateProjectShortcut = () => {
+    setProjectEditorState({ mode: 'create' });
+    setMenuVisible(false);
+  };
+
+  const handleProjectOptions = (projectId: string) => {
+    const project = projects.find(entry => entry.id === projectId);
+    if (project) {
+      setProjectEditorState({ mode: 'rename', project });
+      setMenuVisible(false);
+    }
+  };
+
+  const closeProjectEditor = () => {
+    setProjectEditorState(null);
+    setProjectNameInput('');
+  };
+
+  const handleSubmitProjectEditor = async () => {
+    if (!projectEditorState) {
+      return;
+    }
+    const trimmed = projectNameInput.trim();
+    if (!trimmed) {
+      Alert.alert('Name required', 'Please enter a project name.');
+      return;
+    }
+
+    try {
+      if (projectEditorState.mode === 'create') {
+        const project = await projectManager.createProject(trimmed);
+        setActiveProjectFilter(project.id);
+        hapticManager.trigger('success');
+      } else if (projectEditorState.project) {
+        await projectManager.renameProject(projectEditorState.project.id, trimmed);
+        hapticManager.trigger('success');
+      }
+      closeProjectEditor();
+    } catch (error) {
+      console.error('Failed to save project:', error);
+      Alert.alert(
+        'Unable to save',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    }
+  };
+
+  const handleDeleteProject = async (
+    project: Project,
+    strategy: ProjectDeletionStrategy,
+  ) => {
+    try {
+      await projectManager.deleteProject(project.id, strategy);
+      if (activeProjectFilter === project.id) {
+        setActiveProjectFilter('all');
+      }
+      await loadArtworks();
+      hapticManager.trigger('success');
+    } catch (error) {
+      console.error('Failed to delete project:', error);
+      Alert.alert('Delete failed', 'Unable to remove this project. Please try again.');
+    }
+  };
+
+  const confirmDeleteProject = (project: Project) => {
+    Alert.alert(
+      `Delete "${project.name}"?`,
+      'Choose what to do with the artworks inside this project.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Move to Unfiled',
+          onPress: () => handleDeleteProject(project, 'move-to-unfiled'),
+        },
+        {
+          text: 'Delete Project & Artworks',
+          style: 'destructive',
+          onPress: () => handleDeleteProject(project, 'delete-artworks'),
+        },
+      ],
+    );
+  };
+
+  const handleProjectDeletionRequest = () => {
+    if (projectEditorState?.project) {
+      const target = projectEditorState.project;
+      closeProjectEditor();
+      confirmDeleteProject(target);
+    }
+  };
+
+  const openTransferModal = (mode: 'move' | 'copy', artworkIds: string[]) => {
+    if (!artworkIds.length) {
+      Alert.alert('Select artworks', 'Choose at least one artwork first.');
+      return;
+    }
+    setTransferState({
+      mode,
+      artworkIds: Array.from(new Set(artworkIds)),
+    });
+    setMenuVisible(false);
+  };
+
+  const closeTransferModal = () => {
+    setTransferState(null);
+  };
+
+  const projectTransferTargets = useMemo(
+    () => [
+      {
+        id: 'unfiled',
+        label: 'Unfiled',
+        count: projectArtworkCounts['unfiled'] || 0,
+      },
+      ...projects.map(project => ({
+        id: project.id,
+        label: project.name,
+        count: projectArtworkCounts[project.id] || 0,
+      })),
+    ],
+    [projects, projectArtworkCounts],
+  );
+
+  const handlePerformTransfer = async (targetId: string | null) => {
+    if (!transferState) {
+      return;
+    }
+    setIsProcessingTransfer(true);
+    try {
+      if (transferState.mode === 'move') {
+        for (const artworkId of transferState.artworkIds) {
+          await projectManager.assignArtworkToProject(artworkId, targetId);
+        }
+      } else {
+        for (const artworkId of transferState.artworkIds) {
+          await projectManager.copyArtworkToProject(artworkId, targetId);
+        }
+      }
+      await loadArtworks();
+      clearSelection();
+      setTransferState(null);
+      hapticManager.trigger('success');
+    } catch (error) {
+      console.error('Failed to update project assignment:', error);
+      Alert.alert(
+        'Action failed',
+        'Unable to complete that action right now. Please try again.',
+      );
+    } finally {
+      setIsProcessingTransfer(false);
+    }
   };
 
   const menuItems = [
@@ -638,23 +1049,52 @@ export const GalleryScreen: React.FC = () => {
       item={item}
       onPress={handleArtworkPress}
       onMorePress={handleMoreOptions}
+      onSelectToggle={toggleArtworkSelection}
+      onLongPressSelect={handleArtworkLongPressSelect}
+      isSelectionMode={isSelectionMode}
+      isSelected={selectedArtworkSet.has(item.id)}
       theme={theme}
       styles={styles}
     />
   );
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setArtworks(allArtworks);
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    let filtered = allArtworks;
+
+    if (activeProjectFilter === 'unfiled') {
+      filtered = filtered.filter(entry => !entry.projectId);
+    } else if (activeProjectFilter !== 'all') {
+      filtered = filtered.filter(entry => entry.projectId === activeProjectFilter);
+    }
+
+    if (normalizedQuery) {
+      filtered = filtered.filter(entry =>
+        entry.name.toLowerCase().includes(normalizedQuery),
+      );
+    }
+
+    setArtworks(filtered);
+  }, [searchQuery, allArtworks, activeProjectFilter]);
+
+  useEffect(() => {
+    setSelectedArtworkIds(prev =>
+      prev.filter(id => allArtworks.some(artwork => artwork.id === id)),
+    );
+  }, [allArtworks]);
+
+
+  useEffect(() => {
+    if (!projectEditorState) {
+      setProjectNameInput('');
       return;
     }
-    const normalized = searchQuery.toLowerCase();
-    setArtworks(
-      allArtworks.filter(entry =>
-        entry.name.toLowerCase().includes(normalized),
-      ),
-    );
-  }, [searchQuery, allArtworks]);
+    if (projectEditorState.mode === 'rename' && projectEditorState.project) {
+      setProjectNameInput(projectEditorState.project.name);
+    } else {
+      setProjectNameInput('');
+    }
+  }, [projectEditorState]);
 
   useEffect(() => {
     if (isSearchVisible) {
@@ -670,18 +1110,26 @@ export const GalleryScreen: React.FC = () => {
 
   const hasSearchQuery = searchQuery.trim().length > 0;
 
-  const renderEmptyState = () => (
-    <View style={styles.emptyState}>
-      <Text style={styles.emptyTitle}>
-        {hasSearchQuery ? 'No artworks found' : 'Start Your Creative Journey'}
-      </Text>
-      <Text style={styles.emptySubtitle}>
-        {hasSearchQuery
-          ? 'Try a different name or clear the search.'
-          : 'Tap the + button to create your first masterpiece'}
-      </Text>
-    </View>
-  );
+  const renderEmptyState = () => {
+    const showingProject = activeProjectFilter !== 'all' && !hasSearchQuery;
+    const title = hasSearchQuery
+      ? 'No artworks found'
+      : showingProject
+      ? 'This project is empty'
+      : 'Start Your Creative Journey';
+    const subtitle = hasSearchQuery
+      ? 'Try a different name or clear the search.'
+      : showingProject
+      ? 'Move or copy artworks here to start organizing this project.'
+      : 'Tap the + button to create your first masterpiece';
+
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyTitle}>{title}</Text>
+        <Text style={styles.emptySubtitle}>{subtitle}</Text>
+      </View>
+    );
+  };
 
   return (
     <AnimatedScreenContainer style={styles.container}>
@@ -737,13 +1185,27 @@ export const GalleryScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.projectContext}>
+        <View>
+          <Text style={styles.projectContextLabel}>Project</Text>
+          <Text style={styles.projectContextName} numberOfLines={1}>
+            {currentProjectLabel}
+          </Text>
+        </View>
+        <Text style={styles.projectContextCount}>{currentProjectCountLabel}</Text>
+      </View>
+
       {/* Artwork Grid */}
       <FlatList
         data={artworks}
         renderItem={renderArtworkCard}
         keyExtractor={item => item.id}
         numColumns={2}
-        contentContainerStyle={styles.grid}
+        contentContainerStyle={[
+          styles.grid,
+          isSelectionMode && styles.gridWithSelection,
+        ]}
+        extraData={selectedArtworkIds}
         ListEmptyComponent={!loading ? renderEmptyState : null}
         columnWrapperStyle={styles.row}
         refreshControl={
@@ -755,14 +1217,50 @@ export const GalleryScreen: React.FC = () => {
         }
       />
 
+      {isSelectionMode && (
+        <View style={styles.selectionBar}>
+          <View style={styles.selectionActions}>
+            <TouchableOpacity
+              style={styles.selectionButton}
+              onPress={() => openTransferModal('move', selectedArtworkIds)}
+            >
+              <Icon name="folder" size={18} color="#FFFFFF" />
+              <Text style={styles.selectionButtonText}>Move</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.selectionButton, styles.selectionButtonSpacing]}
+              onPress={() => openTransferModal('copy', selectedArtworkIds)}
+            >
+              <Icon name="copy" size={18} color="#FFFFFF" />
+              <Text style={styles.selectionButtonText}>Copy</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.selectionButton,
+                styles.selectionButtonSecondary,
+                styles.selectionButtonSpacing,
+              ]}
+              onPress={clearSelection}
+            >
+              <Icon name="x-circle" size={18} color={palette.primaryText} />
+              <Text style={[styles.selectionButtonText, styles.selectionButtonSecondaryText]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Floating Action Button */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={handleCreateNew}
-        activeOpacity={0.8}
-      >
-        <Icon name="plus" size={32} color="#FFFFFF" />
-      </TouchableOpacity>
+      {!isSelectionMode && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={openCreateOptions}
+          activeOpacity={0.8}
+        >
+          <Icon name="plus" size={32} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
 
       {/* Side Menu */}
       <SideMenu
@@ -770,6 +1268,15 @@ export const GalleryScreen: React.FC = () => {
         onClose={() => setMenuVisible(false)}
         isPremiumUser={isPremiumUser}
         menuItems={menuItems}
+        projectsSection={{
+          items: projectMenuItems,
+          selectedId: activeProjectFilter,
+          expanded: projectsExpanded,
+          onToggle: handleToggleProjectsSection,
+          onSelect: handleSelectProject,
+          onAddProject: handleCreateProjectShortcut,
+          onItemOptions: handleProjectOptions,
+        }}
       />
 
       {/* Premium Modal */}
@@ -788,6 +1295,182 @@ export const GalleryScreen: React.FC = () => {
           onSkip={() => setTutorialVisible(false)}
         />
       )}
+
+      <Modal
+        visible={createOptionsVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeCreateOptions}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.createOptionsCard}>
+            <Text style={styles.createOptionsTitle}>Create</Text>
+            <Text style={styles.createOptionsSubtitle}>Choose what you want to begin with.</Text>
+            <TouchableOpacity
+              style={styles.createOptionButton}
+              onPress={handleCreateArtworkOption}
+              activeOpacity={0.85}
+            >
+              <Icon name="edit-3" size={20} color={palette.accent} />
+              <View style={styles.createOptionTextContainer}>
+                <Text style={styles.createOptionTitle}>Artwork</Text>
+                <Text style={styles.createOptionDescription}>Start a blank canvas</Text>
+              </View>
+              <Icon
+                name="chevron-right"
+                size={18}
+                color={withOpacity(palette.primaryText, theme.isDark ? 0.6 : 0.5)}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.createOptionButton}
+              onPress={handleCreateProjectOption}
+              activeOpacity={0.85}
+            >
+              <Icon name="folder-plus" size={20} color={palette.accent} />
+              <View style={styles.createOptionTextContainer}>
+                <Text style={styles.createOptionTitle}>Project</Text>
+                <Text style={styles.createOptionDescription}>Organize artworks into a folder</Text>
+              </View>
+              <Icon
+                name="chevron-right"
+                size={18}
+                color={withOpacity(palette.primaryText, theme.isDark ? 0.6 : 0.5)}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.selectionButton, styles.selectionButtonSecondary, { marginTop: spacing.md }]}
+              onPress={closeCreateOptions}
+            >
+              <Text style={[styles.selectionButtonText, styles.selectionButtonSecondaryText]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={Boolean(transferState)}
+        transparent
+        animationType="fade"
+        onRequestClose={closeTransferModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.transferModal}>
+            <Text style={styles.transferTitle}>
+              {transferState?.mode === 'move' ? 'Move to Project' : 'Copy to Project'}
+            </Text>
+            <Text style={styles.transferSubtitle}>
+              Select a destination for{' '}
+              {transferState?.artworkIds.length ?? 0}{' '}
+              {transferState && transferState.artworkIds.length === 1 ? 'artwork' : 'artworks'}.
+            </Text>
+            <ScrollView style={styles.transferList}>
+              {projectTransferTargets.map(target => (
+                <TouchableOpacity
+                  key={target.id}
+                  style={styles.transferOption}
+                  disabled={isProcessingTransfer}
+                  onPress={() =>
+                    handlePerformTransfer(target.id === 'unfiled' ? null : target.id)
+                  }
+                >
+                  <View>
+                    <Text style={styles.transferOptionLabel}>{target.label}</Text>
+                    <Text style={styles.transferOptionMeta}>
+                      {target.count} {target.count === 1 ? 'artwork' : 'artworks'}
+                    </Text>
+                  </View>
+                  <Icon
+                    name="chevron-right"
+                    size={18}
+                    color={withOpacity(palette.primaryText, theme.isDark ? 0.6 : 0.5)}
+                  />
+                </TouchableOpacity>
+              ))}
+              {projectTransferTargets.length === 1 && (
+                <Text style={styles.transferEmptyText}>
+                  Create a project first to start organizing artworks.
+                </Text>
+              )}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.createProjectShortcut}
+              onPress={() => {
+                closeTransferModal();
+                handleCreateProjectShortcut();
+              }}
+            >
+              <Icon name="plus-circle" size={18} color={palette.accent} />
+              <Text style={styles.createProjectShortcutText}>Create new project</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.selectionButton,
+                styles.selectionButtonSecondary,
+                { alignSelf: 'center', marginTop: spacing.md },
+              ]}
+              onPress={closeTransferModal}
+              disabled={isProcessingTransfer}
+            >
+              <Text style={[styles.selectionButtonText, styles.selectionButtonSecondaryText]}>
+                Close
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={Boolean(projectEditorState)}
+        transparent
+        animationType="fade"
+        onRequestClose={closeProjectEditor}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.renameModal}>
+            <Text style={styles.renameTitle}>
+              {projectEditorState?.mode === 'create' ? 'New Project' : 'Edit Project'}
+            </Text>
+            <TextInput
+              value={projectNameInput}
+              onChangeText={setProjectNameInput}
+              placeholder="Project name"
+              placeholderTextColor={withOpacity(
+                palette.mutedText,
+                theme.isDark ? 0.6 : 0.5,
+              )}
+              style={styles.renameInput}
+              autoFocus
+            />
+            <View style={styles.renameActions}>
+              <TouchableOpacity
+                style={[styles.renameButton, { marginRight: spacing.sm }]}
+                onPress={closeProjectEditor}
+              >
+                <Text style={styles.renameButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.renameButton, styles.renameButtonPrimary]}
+                onPress={handleSubmitProjectEditor}
+              >
+                <Text style={[styles.renameButtonText, styles.renameButtonPrimaryText]}>
+                  {projectEditorState?.mode === 'create' ? 'Create' : 'Save'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {projectEditorState?.mode === 'rename' && (
+              <TouchableOpacity
+                style={styles.deleteProjectButton}
+                onPress={handleProjectDeletionRequest}
+              >
+                <Text style={styles.deleteProjectButtonText}>Delete project</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={renameModalVisible}
@@ -829,7 +1512,7 @@ export const GalleryScreen: React.FC = () => {
   );
 };
 
-const createStyles = (theme: AppTheme, topInset: number) => {
+const createStyles = (theme: AppTheme, topInset: number, bottomInset: number) => {
   const palette = theme.colors;
   const cardShadowOpacity = theme.isDark ? 0.35 : 0.12;
   const fabShadowOpacity = theme.isDark ? 0.35 : 0.25;
@@ -895,8 +1578,80 @@ const createStyles = (theme: AppTheme, topInset: number) => {
       color: palette.primaryText,
       textAlign: 'center',
     },
+    projectContext: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.lg,
+      paddingBottom: spacing.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: palette.border,
+    },
+    projectContextLabel: {
+      fontSize: 12,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      color: palette.mutedText,
+      marginBottom: 2,
+    },
+    projectContextName: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: palette.primaryText,
+      maxWidth: width * 0.6,
+    },
+    projectContextCount: {
+      fontSize: 14,
+      color: palette.mutedText,
+    },
     grid: {
       padding: spacing.lg,
+    },
+    gridWithSelection: {
+      paddingBottom: spacing.xxxl + 72,
+    },
+    selectionBar: {
+      position: 'absolute',
+      left: spacing.lg,
+      right: spacing.lg,
+      bottom: bottomInset + spacing.xxxl,
+      borderRadius: 20,
+      padding: spacing.md,
+      backgroundColor: palette.surface,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: palette.shadow,
+      shadowOpacity: theme.isDark ? 0.35 : 0.15,
+      shadowOffset: { width: 0, height: 10 },
+      shadowRadius: 20,
+      elevation: 10,
+    },
+    selectionActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    selectionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: palette.accent,
+      borderRadius: 16,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    selectionButtonSpacing: {
+      marginLeft: spacing.sm,
+    },
+    selectionButtonSecondary: {
+      backgroundColor: withOpacity(palette.primaryText, theme.isDark ? 0.2 : 0.1),
+    },
+    selectionButtonText: {
+      color: '#FFFFFF',
+      fontWeight: '600',
+      marginLeft: spacing.xs,
+    },
+    selectionButtonSecondaryText: {
+      color: palette.primaryText,
     },
     row: {
       justifyContent: 'space-between',
@@ -925,6 +1680,24 @@ const createStyles = (theme: AppTheme, topInset: number) => {
       backgroundColor: strongOverlay,
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    selectionIndicator: {
+      position: 'absolute',
+      top: spacing.sm,
+      left: spacing.sm,
+      zIndex: 3,
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      borderWidth: 2,
+      borderColor: withOpacity(palette.primaryText, theme.isDark ? 0.4 : 0.2),
+      backgroundColor: withOpacity(palette.surface, theme.isDark ? 0.6 : 0.8),
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    selectionIndicatorActive: {
+      backgroundColor: palette.accent,
+      borderColor: palette.accent,
     },
     thumbnail: {
       width: '100%',
@@ -982,7 +1755,7 @@ const createStyles = (theme: AppTheme, topInset: number) => {
     fab: {
       position: 'absolute',
       right: spacing.lg,
-      bottom: spacing.lg,
+      bottom: bottomInset + spacing.lg,
       width: 64,
       height: 64,
       borderRadius: 32,
@@ -1014,10 +1787,29 @@ const createStyles = (theme: AppTheme, topInset: number) => {
       shadowRadius: 24,
       elevation: 10,
     },
+    transferModal: {
+      width: '100%',
+      maxWidth: 420,
+      maxHeight: '80%',
+      borderRadius: 20,
+      padding: spacing.lg,
+      backgroundColor: palette.surface,
+    },
     renameTitle: {
       fontSize: 18,
       fontWeight: '600',
       color: palette.primaryText,
+      marginBottom: spacing.md,
+    },
+    transferTitle: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: palette.primaryText,
+      marginBottom: spacing.xs,
+    },
+    transferSubtitle: {
+      fontSize: 14,
+      color: palette.mutedText,
       marginBottom: spacing.md,
     },
     renameInput: {
@@ -1030,6 +1822,46 @@ const createStyles = (theme: AppTheme, topInset: number) => {
       marginBottom: spacing.lg,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: withOpacity(palette.border, 0.6),
+    },
+    transferList: {
+      maxHeight: 300,
+      marginBottom: spacing.md,
+    },
+    transferOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: spacing.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: palette.border,
+    },
+    transferOptionLabel: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: palette.primaryText,
+    },
+    transferOptionMeta: {
+      fontSize: 12,
+      color: palette.mutedText,
+      marginTop: 2,
+    },
+    createProjectShortcut: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    createProjectShortcutText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: palette.accent,
+      marginLeft: spacing.xs,
+    },
+    transferEmptyText: {
+      fontSize: 13,
+      color: palette.mutedText,
+      marginTop: spacing.md,
     },
     renameActions: {
       flexDirection: 'row',
@@ -1051,6 +1883,53 @@ const createStyles = (theme: AppTheme, topInset: number) => {
     },
     renameButtonPrimaryText: {
       color: theme.isDark ? palette.background : '#FFFFFF',
+    },
+    deleteProjectButton: {
+      marginTop: spacing.md,
+      paddingVertical: spacing.sm,
+      alignItems: 'center',
+    },
+    deleteProjectButtonText: {
+      color: palette.danger ?? '#FF5A5F',
+      fontWeight: '600',
+    },
+    createOptionsCard: {
+      width: '100%',
+      maxWidth: 400,
+      borderRadius: 24,
+      padding: spacing.lg,
+      backgroundColor: palette.surface,
+    },
+    createOptionsTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: palette.primaryText,
+      marginBottom: spacing.xs,
+    },
+    createOptionsSubtitle: {
+      fontSize: 14,
+      color: palette.mutedText,
+      marginBottom: spacing.md,
+    },
+    createOptionButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: spacing.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: palette.border,
+      gap: spacing.sm,
+    },
+    createOptionTextContainer: {
+      flex: 1,
+    },
+    createOptionTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: palette.primaryText,
+    },
+    createOptionDescription: {
+      fontSize: 13,
+      color: palette.mutedText,
     },
   });
 };
