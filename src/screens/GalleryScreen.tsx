@@ -477,24 +477,6 @@ export const GalleryScreen: React.FC = () => {
     }
   };
 
-  const handleSaveArtworkToGallery = async (artwork: ArtworkMetadata) => {
-    try {
-      const exportManager = ExportManager.getInstance();
-      const shareablePath = await prepareShareableArtwork(artwork);
-
-      if (!shareablePath) {
-        return;
-      }
-
-      await exportManager.saveToGallery(shareablePath);
-      hapticManager.trigger('success');
-      Alert.alert('Saved to Gallery', 'Artwork copied to your device gallery.');
-    } catch (error) {
-      console.error('Failed to save artwork to gallery:', error);
-      Alert.alert('Save failed', 'Unable to save the artwork right now. Please try again.');
-    }
-  };
-
   const performDeleteArtwork = async (artwork: ArtworkMetadata) => {
     try {
       const fileManager = FileManager.getInstance();
@@ -529,19 +511,17 @@ export const GalleryScreen: React.FC = () => {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           title: artwork.name,
-          options: ['Cancel', 'Share', 'Save to Gallery', 'Rename', 'Delete'],
+          options: ['Cancel', 'Share', 'Rename', 'Delete'],
           cancelButtonIndex: 0,
-          destructiveButtonIndex: 4,
+          destructiveButtonIndex: 3,
           userInterfaceStyle: 'dark',
         },
         buttonIndex => {
           if (buttonIndex === 1) {
             void handleShareArtwork(artwork);
           } else if (buttonIndex === 2) {
-            void handleSaveArtworkToGallery(artwork);
-          } else if (buttonIndex === 3) {
             openRenameDialog(artwork);
-          } else if (buttonIndex === 4) {
+          } else if (buttonIndex === 3) {
             confirmDeleteArtwork(artwork);
           }
         },
@@ -554,12 +534,6 @@ export const GalleryScreen: React.FC = () => {
         text: 'Share',
         onPress: () => {
           void handleShareArtwork(artwork);
-        },
-      },
-      {
-        text: 'Save to Gallery',
-        onPress: () => {
-          void handleSaveArtworkToGallery(artwork);
         },
       },
       {
