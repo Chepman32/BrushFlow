@@ -28,6 +28,7 @@ interface ExportModalProps {
   visible: boolean;
   onClose: () => void;
   onExport: (options: ExportOptions) => Promise<void>;
+  onSaveToGallery?: (options: ExportOptions) => Promise<void>;
   isPremiumUser: boolean;
 }
 
@@ -41,6 +42,7 @@ const FORMATS: Array<{ id: ExportFormat; label: string; isPremium?: boolean }> =
   ];
 
 const RESOLUTIONS = [
+  { label: '720×1440 (Canvas Default)', width: 720, height: 1440 },
   { label: 'Original Size', width: 0, height: 0 },
   { label: '1080×1080 (Instagram)', width: 1080, height: 1080 },
   { label: '1080×1920 (Story)', width: 1080, height: 1920 },
@@ -53,6 +55,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   visible,
   onClose,
   onExport,
+  onSaveToGallery,
   isPremiumUser,
 }) => {
   const [format, setFormat] = useState<ExportFormat>('png');
@@ -86,12 +89,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     opacity: backdropOpacity.value,
   }));
 
-  const handleExport = async () => {
-    setIsExporting(true);
-    setExportProgress(0);
-
+  const getExportOptions = (): ExportOptions => {
     const resolution = RESOLUTIONS[selectedResolution];
-    const options: ExportOptions = {
+    return {
       format,
       quality: format === 'jpeg' ? quality : undefined,
       preserveTransparency: format === 'png' ? preserveTransparency : false,
@@ -99,12 +99,34 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       width: resolution.width || undefined,
       height: resolution.height || undefined,
     };
+  };
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    setExportProgress(0);
 
     try {
-      await onExport(options);
+      await onExport(getExportOptions());
       onClose();
     } catch (error) {
       console.error('Export failed:', error);
+    } finally {
+      setIsExporting(false);
+      setExportProgress(0);
+    }
+  };
+
+  const handleSaveToGallery = async () => {
+    if (!onSaveToGallery) return;
+
+    setIsExporting(true);
+    setExportProgress(0);
+
+    try {
+      await onSaveToGallery(getExportOptions());
+      onClose();
+    } catch (error) {
+      console.error('Save to gallery failed:', error);
     } finally {
       setIsExporting(false);
       setExportProgress(0);
@@ -309,7 +331,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </View>
           </ScrollView>
 
-          {/* Export Button */}
+          {/* Export Buttons */}
           <View style={styles.footer}>
             {isExporting ? (
               <View style={styles.exportingContainer}>
@@ -319,13 +341,26 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 </Text>
               </View>
             ) : (
-              <TouchableOpacity
-                style={styles.exportButton}
-                onPress={handleExport}
-              >
-                <Icon name="download" size={20} color={colors.text.light} />
-                <Text style={styles.exportButtonText}>Export</Text>
-              </TouchableOpacity>
+              <View style={styles.buttonRow}>
+                {onSaveToGallery && (
+                  <TouchableOpacity
+                    style={[styles.exportButton, styles.saveButton]}
+                    onPress={handleSaveToGallery}
+                  >
+                    <Icon name="image" size={20} color={colors.text.light} />
+                    <Text style={styles.exportButtonText}>Save to Gallery</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.exportButton, onSaveToGallery && styles.shareButton]}
+                  onPress={handleExport}
+                >
+                  <Icon name="share" size={20} color={colors.text.light} />
+                  <Text style={styles.exportButtonText}>
+                    {onSaveToGallery ? 'Share' : 'Export'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         </Animated.View>
@@ -514,7 +549,12 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(0,0,0,0.1)',
   },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
   exportButton: {
+    flex: 1,
     flexDirection: 'row',
     height: 56,
     backgroundColor: colors.primary.blue,
@@ -522,6 +562,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
+  },
+  saveButton: {
+    backgroundColor: colors.accent.green,
+  },
+  shareButton: {
+    flex: 1,
   },
   exportButtonText: {
     ...typography.title,

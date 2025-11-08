@@ -9,3 +9,4 @@ export { LayersPanel } from './LayersPanel';
 export { PremiumModal } from './PremiumModal';
 export { ExportModal } from './ExportModal';
 export { TutorialCarousel } from './TutorialCarousel';
+export { RemoveWatermarkModal } from './RemoveWatermarkModal';

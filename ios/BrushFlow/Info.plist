@@ -35,6 +35,10 @@
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string/>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>BrushFlow needs access to save your artwork to the photo library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>BrushFlow needs access to save your artwork to the photo library.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

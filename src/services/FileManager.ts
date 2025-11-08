@@ -9,8 +9,8 @@ const EXPORTS_DIR = `${RNFS.DocumentDirectoryPath}/Exports`;
 
 export interface ExportOptions {
   format: 'png' | 'jpeg' | 'psd' | 'tiff' | 'svg';
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
   quality?: number;
   preserveTransparency?: boolean;
   includeLayers?: boolean;
@@ -177,8 +177,10 @@ export class FileManager {
       }
 
       const canvas = surface.getCanvas();
-      const scaleX = thumbWidth / artwork.width;
-      const scaleY = thumbHeight / artwork.height;
+      const sourceWidth = artwork.viewportWidth ?? artwork.width;
+      const sourceHeight = artwork.viewportHeight ?? artwork.height;
+      const scaleX = thumbWidth / sourceWidth;
+      const scaleY = thumbHeight / sourceHeight;
 
       // Scale the canvas to fit the thumbnail size
       canvas.scale(scaleX, scaleY);
@@ -187,7 +189,7 @@ export class FileManager {
       const bgPaint = Skia.Paint();
       bgPaint.setColor(Skia.Color(artwork.backgroundColor || '#FFFFFF'));
       canvas.drawRect(
-        Skia.XYWHRect(0, 0, artwork.width, artwork.height),
+        Skia.XYWHRect(0, 0, sourceWidth, sourceHeight),
         bgPaint
       );
 

@@ -9,6 +9,7 @@ export class ToolController {
     tool: 'brush',
     smoothing: 50,
     pressureSensitivity: true,
+    brushType: 'pen',
   };
 
   selectTool(tool: Tool): void {

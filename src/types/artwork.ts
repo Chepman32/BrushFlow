@@ -1,4 +1,5 @@
 import type { SkPath } from '@shopify/react-native-skia';
+import type { BrushType } from './brush';
 
 export type BlendMode =
   | 'normal'
@@ -22,6 +23,9 @@ export interface LayerStroke {
   layerId: string;
   svgPath: string;
   path?: SkPath;
+  brushType?: BrushType;
+  strokeCap?: 'butt' | 'round' | 'square';
+  strokeJoin?: 'miter' | 'round' | 'bevel';
 }
 
 export interface Layer {
@@ -47,6 +51,8 @@ export interface Artwork {
   modifiedAt: Date;
   width: number;
   height: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
   backgroundColor: string;
   layers: Layer[];
   thumbnailPath: string;

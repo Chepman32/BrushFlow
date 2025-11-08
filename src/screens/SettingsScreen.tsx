@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ScrollView,
   View,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Switch,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -17,7 +18,8 @@ import { useSettings } from '../contexts/SettingsContext';
 import type { LanguageCode } from '../contexts/SettingsContext';
 import { useTranslation } from '../i18n';
 import { themes, themeNames, type AppTheme, type ThemeName } from '../theme/themes';
-import { AnimatedScreenContainer } from '../components';
+import { AnimatedScreenContainer, RemoveWatermarkModal } from '../components';
+import { IAPManager } from '../services';
 
 type SettingToggleProps = {
   label: string;
@@ -76,6 +78,8 @@ export const SettingsScreen: React.FC = () => {
   const strings = locale.settings;
 
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const [watermarkModalVisible, setWatermarkModalVisible] = useState(false);
+  const [isProcessingWatermark, setIsProcessingWatermark] = useState(false);
 
   const handleThemeSelect = useCallback(
     (value: ThemeName) => {
@@ -108,6 +112,41 @@ export const SettingsScreen: React.FC = () => {
     },
     [language, setLanguage],
   );
+
+  const handleRemoveWatermarkPurchase = useCallback(
+    async (plan: 'yearly' | 'weekly', _options?: { trialEnabled: boolean }) => {
+      setIsProcessingWatermark(true);
+      try {
+        const iapManager = IAPManager.getInstance();
+        const productId =
+          plan === 'yearly'
+            ? 'com.brushflow.remove_watermark.yearly'
+            : 'com.brushflow.remove_watermark.weekly';
+        await iapManager.purchaseProduct(productId);
+        setWatermarkModalVisible(false);
+      } catch (error) {
+        console.error('Remove watermark purchase failed:', error);
+        Alert.alert(
+          'Purchase failed',
+          'We were unable to complete your unlock. Please try again in a moment.',
+        );
+      } finally {
+        setIsProcessingWatermark(false);
+      }
+    },
+    [],
+  );
+
+  const handleRemoveWatermarkRestore = useCallback(async () => {
+    try {
+      const iapManager = IAPManager.getInstance();
+      await iapManager.restorePurchases();
+      Alert.alert('Restore complete', 'Your purchases have been restored.');
+    } catch (error) {
+      console.error('Restore failed:', error);
+      Alert.alert('Restore failed', 'Unable to restore purchases right now. Please try again.');
+    }
+  }, []);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -234,8 +273,36 @@ export const SettingsScreen: React.FC = () => {
             })}
           </View>
         </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Watermark</Text>
+          <Text style={styles.sectionDescription}>
+            Free exports include a small BrushFlow watermark. Unlock clean exports anytime.
+          </Text>
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.watermarkButton}
+              activeOpacity={0.85}
+              onPress={() => setWatermarkModalVisible(true)}
+            >
+              <View style={styles.watermarkCopy}>
+                <Text style={styles.watermarkTitle}>Remove watermark</Text>
+                <Text style={styles.watermarkSubtitle}>
+                  One-time unlock for watermark-free sharing.
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={20} color={theme.colors.primaryText} />
+            </TouchableOpacity>
+          </View>
+        </View>
         </ScrollView>
       </AnimatedScreenContainer>
+      <RemoveWatermarkModal
+        visible={watermarkModalVisible}
+        onClose={() => setWatermarkModalVisible(false)}
+        onPurchase={handleRemoveWatermarkPurchase}
+        onRestore={handleRemoveWatermarkRestore}
+        isProcessing={isProcessingWatermark}
+      />
     </SafeAreaView>
   );
 };
@@ -301,6 +368,26 @@ const createStyles = (theme: AppTheme) =>
       shadowOpacity: theme.isDark ? 0.4 : 0.08,
       shadowRadius: 12,
       elevation: 4,
+    },
+    watermarkButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 16,
+    },
+    watermarkCopy: {
+      flex: 1,
+      paddingRight: 12,
+    },
+    watermarkTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.colors.primaryText,
+    },
+    watermarkSubtitle: {
+      marginTop: 4,
+      fontSize: 13,
+      color: theme.colors.mutedText,
     },
     themeCard: {
       borderRadius: 16,

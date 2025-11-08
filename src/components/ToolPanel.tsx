@@ -1,12 +1,5 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Dimensions,
-} from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Image } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -16,9 +9,11 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography } from '../theme';
 import Icon from 'react-native-vector-icons/Feather';
-import { Tool, BrushSettings } from '../types';
+import { Tool, BrushSettings, BrushType } from '../types';
+import { BRUSH_TYPES, BRUSH_TYPE_SEQUENCE, type BrushTypeConfig } from '../constants/brushTypes';
 import Slider from '@react-native-community/slider';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -26,10 +21,12 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 interface ToolPanelProps {
   selectedTool: Tool;
   brushSettings: BrushSettings;
+  brushType: BrushType;
   primaryColor: string;
   secondaryColor: string;
   onToolSelect: (tool: Tool) => void;
   onBrushSettingsChange: (settings: Partial<BrushSettings>) => void;
+  onBrushTypeChange: (nextType?: BrushType) => void;
   onColorPress: () => void;
   onSwapColors: () => void;
   isPremiumUser: boolean;
@@ -54,15 +51,17 @@ const TOOLS: Array<{
 ];
 
 const MINIMIZED_HEIGHT = 56;
-const EXPANDED_HEIGHT = 380;
+const EXPANDED_HEIGHT = 600;
 
 export const ToolPanel: React.FC<ToolPanelProps> = ({
   selectedTool,
   brushSettings,
+  brushType,
   primaryColor,
   secondaryColor,
   onToolSelect,
   onBrushSettingsChange,
+  onBrushTypeChange,
   onColorPress,
   onSwapColors,
   isPremiumUser,
@@ -70,6 +69,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
   const [isExpanded, setIsExpanded] = React.useState(false);
   const translateY = useSharedValue(0);
   const translateX = useSharedValue(0);
+  const insets = useSafeAreaInsets();
 
   const panelHeight = useSharedValue(MINIMIZED_HEIGHT);
 
@@ -133,7 +133,24 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
       });
     });
 
-  const selectedToolData = TOOLS.find(t => t.id === selectedTool);
+  const currentBrushType = BRUSH_TYPES[brushType];
+  const bottomOffset = 16 + insets.bottom;
+
+  const renderBrushIcon = (
+    config: BrushTypeConfig,
+    size: number,
+    color: string,
+  ) => {
+    if (config.iconImage) {
+      return (
+        <Image
+          source={config.iconImage}
+          style={{ width: size, height: size, tintColor: color, resizeMode: 'contain' }}
+        />
+      );
+    }
+    return <Icon name={config.icon} size={size} color={color} />;
+  };
 
   return (
     <>
@@ -145,31 +162,50 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
         />
       )}
       <GestureDetector gesture={Gesture.Simultaneous(panGesture, dragGesture)}>
-        <Animated.View style={[styles.container, panelStyle]}>
+        <Animated.View
+          style={[
+            styles.container,
+            { bottom: bottomOffset },
+            panelStyle,
+          ]}
+        >
         {/* Minimized View */}
         {!isExpanded && (
-          <TouchableOpacity
-            style={styles.minimizedContent}
-            onPress={() => setIsExpanded(true)}
-            activeOpacity={0.9}
-          >
-            <Icon
-              name={selectedToolData?.icon || 'edit-3'}
-              size={24}
-              color={colors.text.light}
-            />
-            <View style={styles.colorPreview}>
-              <View
-                style={[styles.colorCircle, { backgroundColor: primaryColor }]}
-              />
-            </View>
-            <Text style={styles.brushSizeText}>{brushSettings.size}px</Text>
-          </TouchableOpacity>
+          <View style={styles.minimizedContent}>
+            <TouchableOpacity
+              style={styles.brushToggle}
+              onPress={() => onBrushTypeChange()}
+              accessibilityLabel="Change brush type"
+            >
+              {renderBrushIcon(currentBrushType, 20, colors.text.light)}
+              <Text style={styles.brushToggleLabel}>
+                {currentBrushType.label}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.minimizedMain}
+              onPress={() => setIsExpanded(true)}
+              activeOpacity={0.9}
+            >
+              <View style={styles.colorPreview}>
+                <View
+                  style={[styles.colorCircle, { backgroundColor: primaryColor }]}
+                />
+              </View>
+              <Text style={styles.brushSizeText}>{brushSettings.size}px</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* Expanded View */}
         {isExpanded && (
-          <Animated.View style={[styles.expandedContent, contentOpacity]}>
+          <Animated.View
+            style={[
+              styles.expandedContent,
+              { paddingBottom: bottomOffset },
+              contentOpacity,
+            ]}
+          >
             {/* Drag Handle */}
             <View style={styles.dragHandle} />
 
@@ -214,6 +250,48 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                 );
               })}
             </ScrollView>
+
+            {/* Brush Type Selector */}
+            <View style={styles.brushTypeContainer}>
+              <View style={styles.brushTypeHeader}>
+                <Text style={styles.settingLabel}>Brush Type</Text>
+                <Text style={styles.brushTypeValue}>
+                  {currentBrushType.label}
+                </Text>
+              </View>
+              <View style={styles.brushTypeChips}>
+                {BRUSH_TYPE_SEQUENCE.map(typeId => {
+                  const config = BRUSH_TYPES[typeId];
+                  const isSelected = typeId === brushType;
+                  return (
+                    <TouchableOpacity
+                      key={typeId}
+                      style={[
+                        styles.brushChip,
+                        isSelected && styles.brushChipSelected,
+                      ]}
+                      onPress={() => onBrushTypeChange(typeId)}
+                      activeOpacity={0.8}
+                    >
+                      {renderBrushIcon(
+                        config,
+                        18,
+                        isSelected ? colors.background.light : colors.text.light,
+                      )}
+                      <Text
+                        style={[
+                          styles.brushChipLabel,
+                          isSelected && styles.brushChipLabelSelected,
+                        ]}
+                      >
+                        {config.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={styles.brushHint}>{currentBrushType.description}</Text>
+            </View>
 
             {/* Brush Settings */}
             <View style={styles.settingsContainer}>
@@ -344,6 +422,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     gap: 16,
   },
+  brushToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  brushToggleLabel: {
+    ...typography.caption,
+    color: colors.text.light,
+    fontWeight: '600',
+  },
+  minimizedMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    flex: 1,
+    justifyContent: 'center',
+  },
   colorPreview: {
     width: 32,
     height: 32,
@@ -380,6 +479,52 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 16,
     marginTop: 12,
+  },
+  brushTypeContainer: {
+    marginBottom: 16,
+    gap: 8,
+  },
+  brushTypeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  brushTypeValue: {
+    ...typography.caption,
+    color: colors.text.light,
+    opacity: 0.75,
+  },
+  brushTypeChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  brushChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  brushChipSelected: {
+    backgroundColor: colors.primary.blue,
+    borderColor: colors.primary.blue,
+  },
+  brushChipLabel: {
+    ...typography.caption,
+    color: colors.text.light,
+    fontWeight: '600',
+  },
+  brushChipLabelSelected: {
+    color: colors.background.light,
+  },
+  brushHint: {
+    ...typography.caption,
+    color: colors.text.light,
+    opacity: 0.6,
   },
   toolButton: {
     width: 64,

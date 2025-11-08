@@ -1,8 +1,59 @@
 import { Artwork, ExportFormat, ExportOptions } from '../types';
 import RNFS from 'react-native-fs';
-import { Canvas, Skia, Image as SkiaImage } from '@shopify/react-native-skia';
-import { Share, Platform } from 'react-native';
+import {
+  Skia,
+  Image as SkiaImage,
+  PaintStyle,
+  StrokeCap,
+  StrokeJoin,
+} from '@shopify/react-native-skia';
+import { Buffer } from 'buffer';
+import {
+  PermissionsAndroid,
+  Platform,
+  Share,
+  TurboModuleRegistry,
+} from 'react-native';
 import { HapticManager } from './HapticManager';
+
+type CameraRollModule = typeof import('@react-native-camera-roll/camera-roll').default;
+const CAMERA_ROLL_NATIVE_NAME = 'RNCCameraRoll';
+
+const hasNativeCameraRollModule = (): boolean => {
+  try {
+    return Boolean(TurboModuleRegistry.get(CAMERA_ROLL_NATIVE_NAME));
+  } catch (error) {
+    console.warn(
+      '[ExportManager] Unable to query TurboModuleRegistry for CameraRoll.',
+      error,
+    );
+    return false;
+  }
+};
+
+const loadCameraRoll = (): CameraRollModule | null => {
+  if (!hasNativeCameraRollModule()) {
+    console.warn(
+      `[ExportManager] Native module "${CAMERA_ROLL_NATIVE_NAME}" is missing. Skipping CameraRoll import.`,
+    );
+    return null;
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cameraRoll = require('@react-native-camera-roll/camera-roll').default;
+    return cameraRoll;
+  } catch (error) {
+    console.warn(
+      '[ExportManager] CameraRoll is unavailable. Did native modules finish installing?',
+      error,
+    );
+    return null;
+  }
+};
+
+const DEFAULT_EXPORT_WIDTH = 1080;
+const DEFAULT_EXPORT_HEIGHT = 1440;
 
 export class ExportManager {
   private static instance: ExportManager;
@@ -53,10 +104,14 @@ export class ExportManager {
 
   async shareArtwork(filePath: string, filename: string): Promise<void> {
     try {
+      const normalizedPath = filePath.startsWith('file://')
+        ? filePath
+        : `file://${filePath}`;
+
       const shareOptions = {
         title: 'Share Artwork',
         message: `Check out my artwork: ${filename}`,
-        url: Platform.OS === 'ios' ? filePath : `file://${filePath}`,
+        url: normalizedPath,
       };
 
       await Share.share(shareOptions);
@@ -68,13 +123,23 @@ export class ExportManager {
 
   async saveToGallery(filePath: string): Promise<void> {
     try {
-      // On iOS, use CameraRoll or similar
-      // On Android, copy to Pictures directory
-      const destPath = `${
-        RNFS.PicturesDirectoryPath
-      }/BrushFlow/${Date.now()}.png`;
-      await RNFS.mkdir(`${RNFS.PicturesDirectoryPath}/BrushFlow`);
-      await RNFS.copyFile(filePath, destPath);
+      const normalizedPath = filePath.startsWith('file://')
+        ? filePath
+        : `file://${filePath}`;
+
+      if (Platform.OS === 'android') {
+        await this.ensureAndroidGalleryPermissions();
+      }
+
+      const cameraRoll = loadCameraRoll();
+      if (cameraRoll) {
+        await cameraRoll.save(normalizedPath, {
+          type: 'photo',
+          album: 'BrushFlow',
+        });
+      } else {
+        await this.promptManualSave(normalizedPath);
+      }
 
       const hapticManager = HapticManager.getInstance();
       hapticManager.exportComplete();
@@ -84,42 +149,243 @@ export class ExportManager {
     }
   }
 
+  private async promptManualSave(fileUrl: string): Promise<void> {
+    const instructions =
+      Platform.OS === 'ios'
+        ? 'Tap "Save Image" to add this artwork to your Photos.'
+        : 'Choose a gallery app (or Files) to store this artwork.';
+
+    await Share.share({
+      title: 'Save Artwork',
+      message: instructions,
+      url: fileUrl,
+    });
+  }
+
+  private async ensureAndroidGalleryPermissions(): Promise<void> {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+
+    const requestedPermissions: string[] = [];
+    const androidVersion = Number(Platform.Version) || 0;
+
+    if (androidVersion >= 33) {
+      const imagePermission = PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES;
+      if (imagePermission) {
+        requestedPermissions.push(imagePermission);
+      }
+    } else {
+      const writePermission =
+        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE;
+      const readPermission =
+        PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE;
+
+      if (writePermission) {
+        requestedPermissions.push(writePermission);
+      }
+      if (readPermission) {
+        requestedPermissions.push(readPermission);
+      }
+    }
+
+    if (requestedPermissions.length === 0) {
+      return;
+    }
+
+    const results = await PermissionsAndroid.requestMultiple(
+      requestedPermissions,
+    );
+
+    const hasDeniedPermission = requestedPermissions.some(
+      permission => results[permission] !== PermissionsAndroid.RESULTS.GRANTED,
+    );
+
+    if (hasDeniedPermission) {
+      throw new Error('Gallery permission was denied.');
+    }
+  }
+
   private async flattenLayers(
     artwork: Artwork,
     options: ExportOptions,
   ): Promise<SkiaImage> {
-    // Create a surface with the export dimensions
-    const surface = Skia.Surface.Make(
-      options.width || artwork.width,
-      options.height || artwork.height,
+    const targetWidth = Math.max(
+      1,
+      Math.round(
+        options.width ??
+          artwork.width ??
+          DEFAULT_EXPORT_WIDTH,
+      ),
     );
+    const targetHeight = Math.max(
+      1,
+      Math.round(
+        options.height ??
+          artwork.height ??
+          DEFAULT_EXPORT_HEIGHT,
+      ),
+    );
+
+    const surface = Skia.Surface.Make(targetWidth, targetHeight);
 
     if (!surface) {
       throw new Error('Failed to create surface');
     }
 
     const canvas = surface.getCanvas();
+    const viewportWidth = Math.max(
+      1,
+      artwork.viewportWidth ?? artwork.width ?? targetWidth,
+    );
+    const viewportHeight = Math.max(
+      1,
+      artwork.viewportHeight ?? artwork.height ?? targetHeight,
+    );
+    const scaleX = targetWidth / viewportWidth;
+    const scaleY = targetHeight / viewportHeight;
 
-    // Draw background
-    const paint = Skia.Paint();
-    paint.setColor(Skia.Color('white'));
-    canvas.drawRect(Skia.XYWHRect(0, 0, artwork.width, artwork.height), paint);
+    const backgroundPaint = Skia.Paint();
+    backgroundPaint.setStyle(PaintStyle.Fill);
+    backgroundPaint.setColor(
+      Skia.Color(artwork.backgroundColor || '#FFFFFF'),
+    );
+    canvas.drawRect(Skia.XYWHRect(0, 0, targetWidth, targetHeight), backgroundPaint);
 
-    // Draw each visible layer
-    for (const layer of artwork.layers) {
+    canvas.save();
+    canvas.scale(scaleX, scaleY);
+
+    const layers = Array.isArray(artwork.layers) ? artwork.layers : [];
+    for (const layer of layers) {
       if (!layer.visible) continue;
+      if (!layer.strokes || layer.strokes.length === 0) {
+        continue;
+      }
 
-      // Apply layer opacity and blend mode
-      paint.setAlphaf(layer.opacity);
-      // Note: Blend mode would be set here based on layer.blendMode
+      for (const stroke of layer.strokes) {
+        const path =
+          stroke.path ||
+          (stroke.svgPath
+            ? Skia.Path.MakeFromSVGString(stroke.svgPath)
+            : null);
+        if (!path) {
+          continue;
+        }
 
-      // Draw layer content
-      // This would involve rendering all strokes in the layer
-      // For now, this is a placeholder
+        const strokePaint = Skia.Paint();
+        strokePaint.setStyle(PaintStyle.Stroke);
+        strokePaint.setAntiAlias(true);
+        const strokeWidth =
+          typeof stroke.strokeWidth === 'number' ? stroke.strokeWidth : 1;
+        strokePaint.setStrokeWidth(Math.max(strokeWidth, 0.1));
+        strokePaint.setColor(Skia.Color(stroke.color || '#000000'));
+        strokePaint.setAlphaf((stroke.opacity ?? 1) * (layer.opacity ?? 1));
+        strokePaint.setStrokeCap(this.resolveStrokeCap(stroke.strokeCap));
+        strokePaint.setStrokeJoin(this.resolveStrokeJoin(stroke.strokeJoin));
+
+        canvas.drawPath(path, strokePaint);
+      }
     }
+
+    canvas.restore();
+    this.drawWatermark(canvas, targetWidth, targetHeight);
 
     const image = surface.makeImageSnapshot();
     return image;
+  }
+
+  private resolveStrokeCap(
+    cap?: 'butt' | 'round' | 'square',
+  ): StrokeCap {
+    switch (cap) {
+      case 'butt':
+        return StrokeCap.Butt;
+      case 'square':
+        return StrokeCap.Square;
+      default:
+        return StrokeCap.Round;
+    }
+  }
+
+  private resolveStrokeJoin(
+    join?: 'miter' | 'round' | 'bevel',
+  ): StrokeJoin {
+    switch (join) {
+      case 'bevel':
+        return StrokeJoin.Bevel;
+      case 'miter':
+        return StrokeJoin.Miter;
+      default:
+        return StrokeJoin.Round;
+    }
+  }
+
+  private drawWatermark(canvas: any, width: number, height: number) {
+    const watermarkText = 'BrushFlow';
+
+    try {
+      const typeface = this.getWatermarkTypeface();
+      if (!typeface) {
+        console.warn('Unable to create watermark font, skipping watermark.');
+        return;
+      }
+
+      const fontSize = Math.max(width, height) * 0.035;
+      const font = Skia.Font(typeface, fontSize);
+
+      const paint = Skia.Paint();
+      paint.setAntiAlias(true);
+      paint.setStyle(PaintStyle.Fill);
+      paint.setColor(Skia.Color('#FFFFFF'));
+      paint.setAlphaf(0.4);
+
+      const textBlob = Skia.TextBlob.MakeFromText?.(watermarkText, font);
+      if (!textBlob) {
+        console.warn('Unable to create watermark text blob, skipping watermark.');
+        return;
+      }
+
+      const textWidth =
+        font.getTextWidth?.(watermarkText) ??
+        fontSize * watermarkText.length * 0.6;
+      const margin = Math.max(width, height) * 0.035;
+      const x = width - textWidth - margin;
+      const y = height - margin;
+
+      canvas.drawTextBlob(textBlob, x, y, paint);
+    } catch (error) {
+      console.warn('Skipping watermark rendering due to error.', error);
+    }
+  }
+
+  private getWatermarkTypeface() {
+    const fontMgr = Skia.FontMgr?.System?.();
+    if (fontMgr) {
+      const preferredFamilies = [
+        'Inter',
+        'Helvetica Neue',
+        'Helvetica',
+        'System',
+        'sans-serif',
+      ];
+      for (const family of preferredFamilies) {
+        try {
+          const typeface =
+            fontMgr.matchFamilyStyle?.(family, {
+              weight: 400,
+              width: 5,
+              slant: 0,
+            }) ?? null;
+          if (typeface) {
+            return typeface;
+          }
+        } catch (error) {
+          console.warn('Failed to match font family', family, error);
+        }
+      }
+    }
+
+    return Skia.Typeface?.MakeDefault?.() ?? null;
   }
 
   private async saveToFormat(
@@ -161,11 +427,8 @@ export class ExportManager {
     await RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/Exports`);
 
     // Write file
-    await RNFS.writeFile(
-      filePath,
-      Buffer.from(data).toString('base64'),
-      'base64',
-    );
+    const base64Data = Buffer.from(data).toString('base64');
+    await RNFS.writeFile(filePath, base64Data, 'base64');
 
     return filePath;
   }

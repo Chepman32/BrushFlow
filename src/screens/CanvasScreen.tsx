@@ -6,6 +6,7 @@ import {
   Dimensions,
   StatusBar,
   BackHandler,
+  Alert,
 } from 'react-native';
 import { Canvas, Path, Skia } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
@@ -39,12 +40,21 @@ import {
   ExportManager,
   FileManager,
 } from '../services';
-import { Tool, BrushSettings, Layer, Artwork, ExportOptions } from '../types';
+import {
+  Tool,
+  BrushSettings,
+  BrushType,
+  Layer,
+  Artwork,
+  ExportOptions,
+} from '../types';
 import Icon from 'react-native-vector-icons/Feather';
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppTheme } from '../theme/themes';
+import { BRUSH_TYPES, getNextBrushType } from '../constants/brushTypes';
 
-const { width, height } = Dimensions.get('window');
+const { width: viewportWidth, height: viewportHeight } = Dimensions.get('window');
+const DEFAULT_ARTWORK_RESOLUTION = { width: 720, height: 1440 };
 
 type DrawnStroke = {
   id: string;
@@ -54,6 +64,9 @@ type DrawnStroke = {
   opacity: number;
   layerId: string;
   svgPath: string;
+  brushType: BrushType;
+  strokeCap: 'butt' | 'round' | 'square';
+  strokeJoin: 'miter' | 'round' | 'bevel';
 };
 
 type CanvasLayer = Layer & {
@@ -78,14 +91,26 @@ export const CanvasScreen: React.FC = () => {
 
   // Core state
   const [selectedTool, setSelectedTool] = useState<Tool>('brush');
+  const [artworkResolution, setArtworkResolution] = useState({
+    width: DEFAULT_ARTWORK_RESOLUTION.width,
+    height: DEFAULT_ARTWORK_RESOLUTION.height,
+  });
+  const [artworkViewport, setArtworkViewport] = useState({
+    width: viewportWidth,
+    height: viewportHeight,
+  });
   const [brushSettings, setBrushSettings] = useState<BrushSettings>({
     size: 10,
     opacity: 1,
     color: '#000000',
+    tool: 'brush',
+    smoothing: 0,
+    pressureSensitivity: true,
+    brushType: 'pen',
   });
   const [primaryColor, setPrimaryColor] = useState('#000000');
   const [secondaryColor, setSecondaryColor] = useState('#FFFFFF');
-  const [layers, setLayers] = useState<CanvasLayer[]>([
+  const [layers, setLayers] = useState<CanvasLayer[]>(() => [
     {
       id: '1',
       name: 'Layer 1',
@@ -96,8 +121,8 @@ export const CanvasScreen: React.FC = () => {
       strokes: [],
       x: 0,
       y: 0,
-      width,
-      height,
+      width: DEFAULT_ARTWORK_RESOLUTION.width,
+      height: DEFAULT_ARTWORK_RESOLUTION.height,
     },
   ]);
   const [selectedLayerId, setSelectedLayerId] = useState('1');
@@ -113,8 +138,10 @@ export const CanvasScreen: React.FC = () => {
     ({
       id: artworkIdRef.current,
       name: artworkName,
-      width,
-      height,
+      width: artworkResolution.width,
+      height: artworkResolution.height,
+      viewportWidth: artworkViewport.width,
+      viewportHeight: artworkViewport.height,
       layers: latestLayers ?? layers,
       createdAt: artworkCreatedAt,
       modifiedAt: new Date(),
@@ -128,6 +155,10 @@ export const CanvasScreen: React.FC = () => {
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const currentBrushConfig = useMemo(
+    () => BRUSH_TYPES[brushSettings.brushType],
+    [brushSettings.brushType],
+  );
 
   // Managers
   const drawingEngine = useRef(new DrawingEngine()).current;
@@ -152,14 +183,30 @@ export const CanvasScreen: React.FC = () => {
           artworkIdRef.current = loadedArtwork.id;
           hasExistingFileRef.current = true;
           setArtworkCreatedAt(loadedArtwork.createdAt);
+          setArtworkResolution({
+            width: loadedArtwork.width || DEFAULT_ARTWORK_RESOLUTION.width,
+            height: loadedArtwork.height || DEFAULT_ARTWORK_RESOLUTION.height,
+          });
+          setArtworkViewport({
+            width: loadedArtwork.viewportWidth ?? viewportWidth,
+            height: loadedArtwork.viewportHeight ?? viewportHeight,
+          });
 
           // Reconstruct Skia paths from SVG strings
           const reconstructedLayers: CanvasLayer[] = loadedArtwork.layers.map(layer => ({
             ...layer,
-            strokes: (layer.strokes || []).map(stroke => ({
-              ...stroke,
-              path: Skia.Path.MakeFromSVGString(stroke.svgPath) || Skia.Path.Make(),
-            })),
+            strokes: (layer.strokes || []).map(stroke => {
+              const brushType: BrushType = stroke.brushType ?? 'pen';
+              const config = BRUSH_TYPES[brushType];
+
+              return {
+                ...stroke,
+                brushType,
+                strokeCap: stroke.strokeCap ?? config.strokeCap,
+                strokeJoin: stroke.strokeJoin ?? config.strokeJoin,
+                path: Skia.Path.MakeFromSVGString(stroke.svgPath) || Skia.Path.Make(),
+              };
+            }),
           }));
 
           setLayers(reconstructedLayers);
@@ -257,12 +304,16 @@ export const CanvasScreen: React.FC = () => {
       return;
     }
 
-    drawingEngine.startStroke(
-      { x, y },
-      primaryColor,
-      brushSettings.size,
-      brushSettings.opacity,
+    const strokeWidth = Math.max(
+      1,
+      brushSettings.size * currentBrushConfig.sizeMultiplier,
     );
+    const strokeOpacity = Math.min(
+      1,
+      brushSettings.opacity * currentBrushConfig.opacityMultiplier,
+    );
+
+    drawingEngine.startStroke({ x, y }, primaryColor, strokeWidth, strokeOpacity);
 
     const path = drawingEngine.getCurrentPath();
     if (path) {
@@ -271,10 +322,13 @@ export const CanvasScreen: React.FC = () => {
         id: strokeId,
         path: path.copy(),
         color: primaryColor,
-        strokeWidth: brushSettings.size,
-        opacity: brushSettings.opacity,
+        strokeWidth,
+        opacity: strokeOpacity,
         layerId: activeLayer.id,
         svgPath: path.toSVGString(),
+        brushType: brushSettings.brushType,
+        strokeCap: currentBrushConfig.strokeCap,
+        strokeJoin: currentBrushConfig.strokeJoin,
       };
       currentStrokeRef.current = newStroke;
       setCurrentStroke(newStroke);
@@ -438,7 +492,15 @@ export const CanvasScreen: React.FC = () => {
   };
 
   const handleBrushSettingsChange = (settings: Partial<BrushSettings>) => {
-    setBrushSettings({ ...brushSettings, ...settings });
+    setBrushSettings(prev => ({ ...prev, ...settings }));
+  };
+
+  const handleBrushTypeChange = (nextType?: BrushType) => {
+    setBrushSettings(prev => ({
+      ...prev,
+      brushType: nextType ?? getNextBrushType(prev.brushType),
+    }));
+    hapticManager.toolSelection();
   };
 
   const handleSwapColors = () => {
@@ -450,7 +512,7 @@ export const CanvasScreen: React.FC = () => {
 
   const handleColorSelect = (color: string) => {
     setPrimaryColor(color);
-    setBrushSettings({ ...brushSettings, color });
+    setBrushSettings(prev => ({ ...prev, color }));
     hapticManager.colorSelection();
   };
 
@@ -471,8 +533,8 @@ export const CanvasScreen: React.FC = () => {
       strokes: [],
       x: 0,
       y: 0,
-      width,
-      height,
+      width: artworkResolution.width,
+      height: artworkResolution.height,
     };
 
     setLayers(prevLayers => {
@@ -575,6 +637,30 @@ export const CanvasScreen: React.FC = () => {
       await exportManager.shareArtwork(filePath, options.filename || 'artwork');
     } catch (error) {
       console.error('Export failed:', error);
+    }
+  };
+
+  const handleSaveToGallery = async (options: ExportOptions) => {
+    const exportArtwork: Artwork = {
+      ...buildArtworkPayload(),
+      name: options.filename || artworkName,
+      modifiedAt: new Date(),
+    };
+
+    try {
+      const filePath = await exportManager.exportArtwork(exportArtwork, options);
+      console.log('Exported to:', filePath);
+
+      // Save to gallery
+      await exportManager.saveToGallery(filePath);
+
+      // Show success message
+      Alert.alert('Success', 'Artwork saved to gallery successfully!');
+      hapticManager.exportComplete();
+    } catch (error) {
+      console.error('Save to gallery failed:', error);
+      Alert.alert('Error', 'Failed to save artwork to gallery. Please try again.');
+      hapticManager.exportFailed();
     }
   };
 
@@ -703,6 +789,8 @@ export const CanvasScreen: React.FC = () => {
                     style="stroke"
                     strokeWidth={stroke.strokeWidth}
                     opacity={layer.opacity * stroke.opacity}
+                    strokeCap={stroke.strokeCap || 'round'}
+                    strokeJoin={stroke.strokeJoin || 'round'}
                   />
                 );
               });
@@ -716,6 +804,8 @@ export const CanvasScreen: React.FC = () => {
                 style="stroke"
                 strokeWidth={currentStroke.strokeWidth}
                 opacity={currentStrokeLayerOpacity * currentStroke.opacity}
+                strokeCap={currentStroke.strokeCap || 'round'}
+                strokeJoin={currentStroke.strokeJoin || 'round'}
               />
             )}
           </Canvas>
@@ -727,10 +817,12 @@ export const CanvasScreen: React.FC = () => {
         <ToolPanel
           selectedTool={selectedTool}
           brushSettings={brushSettings}
+          brushType={brushSettings.brushType}
           primaryColor={primaryColor}
           secondaryColor={secondaryColor}
           onToolSelect={handleToolSelect}
           onBrushSettingsChange={handleBrushSettingsChange}
+          onBrushTypeChange={handleBrushTypeChange}
           onColorPress={() => setColorPickerVisible(true)}
           onSwapColors={handleSwapColors}
           isPremiumUser={isPremiumUser}
@@ -771,6 +863,7 @@ export const CanvasScreen: React.FC = () => {
         visible={exportModalVisible}
         onClose={() => setExportModalVisible(false)}
         onExport={handleExport}
+        onSaveToGallery={handleSaveToGallery}
         isPremiumUser={isPremiumUser}
       />
     </GestureHandlerRootView>

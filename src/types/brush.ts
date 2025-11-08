@@ -10,13 +10,16 @@ export type Tool =
   | 'cloneStamp' // Premium
   | 'symmetry'; // Premium
 
+export type BrushType = 'pen' | 'marker' | 'pencil' | 'leftTip';
+
 export interface BrushSettings {
   size: number; // 1-200 pixels
   opacity: number; // 0-1
   color: string; // RGBA hex
-  tool: Tool;
-  smoothing: number; // 0-100%
-  pressureSensitivity: boolean;
+  tool?: Tool;
+  smoothing?: number; // 0-100%
+  pressureSensitivity?: boolean;
+  brushType: BrushType;
 }
 
 export interface CanvasTransform {

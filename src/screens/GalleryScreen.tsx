@@ -19,7 +19,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { DrawerNavigationProp } from '@react-navigation/drawer';
 import type { DrawerParamList } from '../navigation/types';
 import { FileManager, HapticManager, IAPManager, ExportManager } from '../services';
-import { ArtworkMetadata } from '../types';
+import { Artwork, ArtworkMetadata } from '../types';
 import { spacing } from '../theme';
 import {
   SideMenu,
@@ -396,31 +396,102 @@ export const GalleryScreen: React.FC = () => {
     }
   };
 
+  const getThumbnailFallbackPath = async (
+    artwork: ArtworkMetadata,
+  ): Promise<string | null> => {
+    if (!artwork.thumbnailPath) {
+      return null;
+    }
+    try {
+      const exists = await RNFS.exists(artwork.thumbnailPath);
+      return exists ? artwork.thumbnailPath : null;
+    } catch (error) {
+      console.warn('Failed to check thumbnail for fallback sharing:', error);
+      return null;
+    }
+  };
+
+  const prepareShareableArtwork = async (
+    artwork: ArtworkMetadata,
+  ): Promise<string | null> => {
+    try {
+      const fileManager = FileManager.getInstance();
+      const exportManager = ExportManager.getInstance();
+      const fullArtwork = await fileManager.loadArtwork(artwork.id);
+      const safeWidth = Math.max(
+        1,
+        fullArtwork.width ?? artwork.width ?? 1080,
+      );
+      const safeHeight = Math.max(
+        1,
+        fullArtwork.height ??
+          artwork.height ??
+          Math.round((safeWidth * 4) / 3),
+      );
+      const sanitizedArtwork: Artwork = {
+        ...fullArtwork,
+        width: safeWidth,
+        height: safeHeight,
+        viewportWidth: fullArtwork.viewportWidth ?? safeWidth,
+        viewportHeight: fullArtwork.viewportHeight ?? safeHeight,
+        layers: Array.isArray(fullArtwork.layers) ? fullArtwork.layers : [],
+      };
+
+      const exportPath = await exportManager.exportArtwork(sanitizedArtwork, {
+        format: 'png',
+        filename: `${artwork.id}-share-${Date.now()}`,
+        width: safeWidth,
+        height: safeHeight,
+        preserveTransparency: true,
+      });
+
+      return exportPath;
+    } catch (error) {
+      console.error('Failed to prepare artwork for sharing:', error);
+      const fallbackPath = await getThumbnailFallbackPath(artwork);
+      if (fallbackPath) {
+        console.warn('Falling back to cached thumbnail for sharing.', fallbackPath);
+        return fallbackPath;
+      }
+      Alert.alert(
+        'Share unavailable',
+        'Unable to render this artwork for sharing right now. Please open it once and try again.',
+      );
+      return null;
+    }
+  };
+
   const handleShareArtwork = async (artwork: ArtworkMetadata) => {
     try {
       const exportManager = ExportManager.getInstance();
-      if (!artwork.thumbnailPath) {
-        Alert.alert(
-          'Share unavailable',
-          'Open the artwork once to generate a preview before sharing.',
-        );
+      const shareablePath = await prepareShareableArtwork(artwork);
+      if (!shareablePath) {
         return;
       }
 
-      const exists = await RNFS.exists(artwork.thumbnailPath);
-      if (!exists) {
-        Alert.alert(
-          'Share unavailable',
-          'Preview not found. Open the artwork to regenerate it and try again.',
-        );
-        return;
-      }
-
-      await exportManager.shareArtwork(artwork.thumbnailPath, artwork.name);
+      await exportManager.shareArtwork(shareablePath, artwork.name);
       hapticManager.trigger('success');
     } catch (error) {
       console.error('Failed to share artwork:', error);
       Alert.alert('Share failed', 'Unable to share the artwork right now. Please try again.');
+    }
+  };
+
+  const handleSaveArtworkToGallery = async (artwork: ArtworkMetadata) => {
+    try {
+      const exportManager = ExportManager.getInstance();
+      const shareablePath = await prepareShareableArtwork(artwork);
+
+      if (!shareablePath) {
+        return;
+      }
+
+      await exportManager.saveToGallery(shareablePath);
+      hapticManager.trigger('success');
+      Alert.alert('Saved to Gallery', 'Artwork copied to your device gallery.');
+    } catch (error) {
+      console.error('Failed to save artwork to gallery:', error);
+      Alert.alert('Save failed', 'Unable to save the artwork right now. Please try again.');
     }
   };
 
@@ -458,17 +529,19 @@ export const GalleryScreen: React.FC = () => {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           title: artwork.name,
-          options: ['Cancel', 'Share', 'Rename', 'Delete'],
+          options: ['Cancel', 'Share', 'Save to Gallery', 'Rename', 'Delete'],
           cancelButtonIndex: 0,
-          destructiveButtonIndex: 3,
+          destructiveButtonIndex: 4,
           userInterfaceStyle: 'dark',
         },
         buttonIndex => {
           if (buttonIndex === 1) {
             void handleShareArtwork(artwork);
           } else if (buttonIndex === 2) {
-            openRenameDialog(artwork);
+            void handleSaveArtworkToGallery(artwork);
           } else if (buttonIndex === 3) {
+            openRenameDialog(artwork);
+          } else if (buttonIndex === 4) {
             confirmDeleteArtwork(artwork);
           }
         },
@@ -481,6 +554,12 @@ export const GalleryScreen: React.FC = () => {
         text: 'Share',
         onPress: () => {
           void handleShareArtwork(artwork);
+        },
+      },
+      {
+        text: 'Save to Gallery',
+        onPress: () => {
+          void handleSaveArtworkToGallery(artwork);
         },
       },
       {
