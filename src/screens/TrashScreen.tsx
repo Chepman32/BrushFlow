@@ -13,7 +13,9 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { DrawerNavigationProp } from '@react-navigation/drawer';
+import type { DrawerParamList } from '../navigation/types';
 import { FileManager, HapticManager, TrashCleanupService } from '../services';
 import { TrashedArtwork } from '../types';
 import { spacing } from '../theme';
@@ -95,7 +97,10 @@ const TrashedArtworkCard: React.FC<{
   );
 };
 
+type NavigationProp = DrawerNavigationProp<DrawerParamList, 'Trash'>;
+
 export const TrashScreen: React.FC = () => {
+  const navigation = useNavigation<NavigationProp>();
   const { theme } = useSettings();
   const { locale } = useTranslation();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -249,7 +254,17 @@ export const TrashScreen: React.FC = () => {
   const renderHeader = () => (
     <View style={styles.header}>
       <View style={styles.headerTop}>
-        <Text style={styles.title}>{locale.navigation.trash}</Text>
+        <View style={styles.headerLeft}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Open Menu"
+            onPress={() => navigation.openDrawer()}
+            style={styles.menuButton}
+          >
+            <Icon name="menu" size={24} color={theme.colors.primaryText} />
+          </TouchableOpacity>
+          <Text style={styles.title}>{locale.navigation.trash}</Text>
+        </View>
         {trashedArtworks.length > 0 && (
           <TouchableOpacity
             style={styles.emptyButton}
@@ -333,6 +348,21 @@ const createStyles = (theme: AppTheme) =>
       justifyContent: 'space-between',
       alignItems: 'center',
       marginBottom: spacing.sm,
+    },
+    headerLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    menuButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.isDark
+        ? 'rgba(255, 255, 255, 0.12)'
+        : 'rgba(0, 0, 0, 0.08)',
     },
     title: {
       fontSize: 32,

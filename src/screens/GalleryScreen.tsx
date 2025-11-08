@@ -483,7 +483,6 @@ export const GalleryScreen: React.FC = () => {
       await fileManager.moveToTrash(artwork.id);
       await loadArtworks();
       hapticManager.trigger('success');
-      Alert.alert('Moved to Trash', `"${artwork.name}" has been moved to trash. You can restore it from the Trash screen.`);
     } catch (error) {
       console.error('Failed to move artwork to trash:', error);
       Alert.alert('Failed', 'Unable to move the artwork to trash. Please try again.');

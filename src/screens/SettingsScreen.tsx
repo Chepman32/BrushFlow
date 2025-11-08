@@ -225,11 +225,11 @@ export const SettingsScreen: React.FC = () => {
         <View style={styles.header}>
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel="Go Back"
-            onPress={() => navigation.goBack()}
+            accessibilityLabel="Open Menu"
+            onPress={() => navigation.openDrawer()}
             style={styles.backButton}
           >
-            <Icon name="arrow-left" size={22} color={theme.colors.primaryText} />
+            <Icon name="menu" size={22} color={theme.colors.primaryText} />
           </TouchableOpacity>
           <Text style={styles.title}>{strings.title}</Text>
         </View>
@@ -633,16 +633,14 @@ const createStyles = (theme: AppTheme) =>
     },
     retentionDaysWrap: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
       marginTop: 12,
+      gap: 8,
     },
     retentionChip: {
       paddingVertical: 8,
       paddingHorizontal: 16,
       borderRadius: 22,
       borderWidth: 1,
-      marginRight: 12,
-      marginBottom: 12,
     },
     retentionText: {
       fontSize: 15,
