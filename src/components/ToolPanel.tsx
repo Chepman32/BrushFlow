@@ -70,6 +70,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
   const translateY = useSharedValue(0);
   const translateX = useSharedValue(0);
   const insets = useSafeAreaInsets();
+  const toolScrollRef = React.useRef<ScrollView>(null);
 
   const panelHeight = useSharedValue(MINIMIZED_HEIGHT);
 
@@ -83,6 +84,25 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
       },
     );
   }, [isExpanded]);
+
+  // Scroll to selected tool when panel expands
+  React.useEffect(() => {
+    if (isExpanded && toolScrollRef.current) {
+      const selectedIndex = TOOLS.findIndex(tool => tool.id === selectedTool);
+      if (selectedIndex > -1) {
+        // Each tool button is 64px wide + 12px gap
+        const toolWidth = 64 + 12;
+        const scrollPosition = selectedIndex * toolWidth;
+
+        setTimeout(() => {
+          toolScrollRef.current?.scrollTo({
+            x: scrollPosition,
+            animated: true,
+          });
+        }, 100); // Small delay to ensure the panel is expanded
+      }
+    }
+  }, [isExpanded, selectedTool]);
 
   const panelStyle = useAnimatedStyle(() => ({
     height: panelHeight.value,
@@ -232,6 +252,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
 
             {/* Tool Selector */}
             <ScrollView
+              ref={toolScrollRef}
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.toolsContainer}
@@ -247,7 +268,12 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                         styles.toolButton,
                         isSelected && styles.toolButtonSelected,
                       ]}
-                      onPress={() => !isLocked && onToolSelect(tool.id)}
+                      onPress={() => {
+                        if (!isLocked) {
+                          onToolSelect(tool.id);
+                          setIsExpanded(false);
+                        }
+                      }}
                       activeOpacity={0.7}
                     >
                       <Icon
