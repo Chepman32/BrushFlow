@@ -9,7 +9,7 @@ import {
   Alert,
   PanResponder,
 } from 'react-native';
-import { Canvas, Path, Skia, DashPathEffect, StrokeCap, StrokeJoin, Group, PathOp } from '@shopify/react-native-skia';
+import { Canvas, Path, Skia, DashPathEffect, StrokeCap, StrokeJoin, Group } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
 import {
   Gesture,
@@ -71,6 +71,8 @@ type DrawnStroke = {
   isEraser?: boolean;
   blendMode?: 'clear' | 'normal';
   isFilled?: boolean;
+  clipPath?: SkPath;
+  clipPathSvg?: string;
 };
 
 type CanvasLayer = Layer & {
@@ -240,26 +242,6 @@ export const CanvasScreen: React.FC = () => {
     return selectionPath;
   }, [selectedStroke]);
 
-  const clipPathToSelection = React.useCallback((sourcePath?: SkPath | null): SkPath | null => {
-    if (!sourcePath) {
-      return null;
-    }
-
-    if (!selectionMaskPath) {
-      return sourcePath;
-    }
-
-    const clipped = sourcePath.copy();
-    const mask = selectionMaskPath.copy();
-    const success = clipped.op(mask, PathOp.Intersect);
-
-    if (!success || clipped.isEmpty()) {
-      return null;
-    }
-
-    return clipped;
-  }, [selectionMaskPath]);
-
   // Managers
   const drawingEngine = useRef(new DrawingEngine()).current;
   const layerManager = useRef(new LayerManager()).current;
@@ -299,6 +281,9 @@ export const CanvasScreen: React.FC = () => {
             strokes: (layer.strokes || []).map(stroke => {
               const brushType: BrushType = stroke.brushType ?? 'pen';
               const config = BRUSH_TYPES[brushType];
+              const clipPath = stroke.clipPathSvg
+                ? Skia.Path.MakeFromSVGString(stroke.clipPathSvg) || undefined
+                : undefined;
 
               return {
                 ...stroke,
@@ -306,6 +291,7 @@ export const CanvasScreen: React.FC = () => {
                 strokeCap: stroke.strokeCap ?? config.strokeCap,
                 strokeJoin: stroke.strokeJoin ?? config.strokeJoin,
                 path: Skia.Path.MakeFromSVGString(stroke.svgPath) || Skia.Path.Make(),
+                clipPath,
               };
             }),
           }));
@@ -784,20 +770,12 @@ export const CanvasScreen: React.FC = () => {
     drawingEngine.endStroke();
 
     if (completedStroke) {
-      const clippedPath = clipPathToSelection(completedStroke.path);
-
-      if (selectionMaskPath && !clippedPath) {
-        console.log('🎨 Stroke entirely outside selection, discarding');
-        currentStrokeRef.current = null;
-        setCurrentStroke(null);
-        return;
-      }
-
-      if (clippedPath) {
+      if (selectionMaskPath) {
+        const clipPathSvg = selectionMaskPath.toSVGString();
         completedStroke = {
           ...completedStroke,
-          path: clippedPath,
-          svgPath: clippedPath.toSVGString(),
+          clipPath: selectionMaskPath.copy(),
+          clipPathSvg,
         };
       }
 
@@ -820,7 +798,7 @@ export const CanvasScreen: React.FC = () => {
 
     currentStrokeRef.current = null;
     setCurrentStroke(null);
-  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager, selectedTool, selectionRect, clipPathToSelection, selectionMaskPath]);
+  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager, selectedTool, selectionRect]);
 
   const panResponder = useMemo(
     () =>
@@ -1229,9 +1207,8 @@ export const CanvasScreen: React.FC = () => {
               const isEraserStroke = stroke.isEraser || stroke.blendMode === 'clear';
               const isFilled = stroke.isFilled;
 
-              return (
+              const pathElement = (
                 <Path
-                  key={stroke.id}
                   path={stroke.path}
                   color={isEraserStroke ? '#FFFFFF' : stroke.color}
                   style={isFilled ? "fill" : "stroke"}
@@ -1242,6 +1219,16 @@ export const CanvasScreen: React.FC = () => {
                   blendMode={isEraserStroke ? 'clear' : undefined}
                 />
               );
+
+              if (stroke.clipPath) {
+                return (
+                  <Group key={`${stroke.id}-clip`} clip={stroke.clipPath}>
+                    {pathElement}
+                  </Group>
+                );
+              }
+
+              return React.cloneElement(pathElement, { key: stroke.id });
             });
           })()}
 

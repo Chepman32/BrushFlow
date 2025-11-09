@@ -106,6 +106,10 @@ export class UndoRedoManager {
               stroke?.path && typeof stroke.path.copy === 'function'
                 ? stroke.path.copy()
                 : stroke.path,
+            clipPath:
+              stroke?.clipPath && typeof stroke.clipPath.copy === 'function'
+                ? stroke.clipPath.copy()
+                : stroke.clipPath,
           }))
         : [],
     }));

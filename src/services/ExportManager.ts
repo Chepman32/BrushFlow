@@ -9,6 +9,7 @@ import {
   ColorType,
   AlphaType,
   ImageFormat,
+  ClipOp,
 } from '@shopify/react-native-skia';
 import { Buffer } from 'buffer';
 import {
@@ -267,6 +268,15 @@ export class ExportManager {
           continue;
         }
 
+        let clipPath = null;
+        if (stroke.clipPathSvg) {
+          clipPath = Skia.Path.MakeFromSVGString(stroke.clipPathSvg);
+          if (clipPath) {
+            canvas.save();
+            canvas.clipPath(clipPath, ClipOp.Intersect, true);
+          }
+        }
+
         const strokePaint = Skia.Paint();
         strokePaint.setStyle(PaintStyle.Stroke);
         strokePaint.setAntiAlias(true);
@@ -279,6 +289,10 @@ export class ExportManager {
         strokePaint.setStrokeJoin(this.resolveStrokeJoin(stroke.strokeJoin));
 
         canvas.drawPath(path, strokePaint);
+
+        if (clipPath) {
+          canvas.restore();
+        }
       }
     }
 

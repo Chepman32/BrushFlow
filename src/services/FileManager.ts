@@ -1,7 +1,7 @@
 import RNFS from 'react-native-fs';
 import { Buffer } from 'buffer';
 import { Artwork, ArtworkMetadata, Layer, TrashedArtwork } from '../types/artwork';
-import { PaintStyle, Skia, ImageFormat } from '@shopify/react-native-skia';
+import { PaintStyle, Skia, ImageFormat, ClipOp } from '@shopify/react-native-skia';
 
 const ARTWORKS_DIR = `${RNFS.DocumentDirectoryPath}/Artworks`;
 const THUMBNAILS_DIR = `${RNFS.DocumentDirectoryPath}/Thumbnails`;
@@ -435,14 +435,27 @@ export class FileManager {
         // Draw each stroke in the layer
         if (layer.strokes) {
           for (const stroke of layer.strokes) {
-            if (stroke.svgPath) {
-              const path = Skia.Path.MakeFromSVGString(stroke.svgPath);
-              if (path) {
-                paint.setColor(Skia.Color(stroke.color));
-                paint.setStrokeWidth(stroke.strokeWidth);
-                paint.setAlphaf(layer.opacity * stroke.opacity);
-                canvas.drawPath(path, paint);
+            if (!stroke.svgPath) continue;
+
+            const path = Skia.Path.MakeFromSVGString(stroke.svgPath);
+            if (!path) continue;
+
+            let clipPath = null;
+            if (stroke.clipPathSvg) {
+              clipPath = Skia.Path.MakeFromSVGString(stroke.clipPathSvg);
+              if (clipPath) {
+                canvas.save();
+                canvas.clipPath(clipPath, ClipOp.Intersect, true);
               }
+            }
+
+            paint.setColor(Skia.Color(stroke.color));
+            paint.setStrokeWidth(stroke.strokeWidth);
+            paint.setAlphaf(layer.opacity * stroke.opacity);
+            canvas.drawPath(path, paint);
+
+            if (clipPath) {
+              canvas.restore();
             }
           }
         }
@@ -497,7 +510,7 @@ export class FileManager {
       layers: artwork.layers.map(layer => {
         const serializedStrokes = layer.strokes
           ? layer.strokes.map(stroke => {
-              const { path, ...strokeRest } = stroke as any;
+              const { path, clipPath, ...strokeRest } = stroke as any;
               return {
                 ...strokeRest,
                 svgPath:
@@ -505,6 +518,11 @@ export class FileManager {
                   (path && typeof path.toSVGString === 'function'
                     ? path.toSVGString()
                     : ''),
+                clipPathSvg:
+                  strokeRest.clipPathSvg ??
+                  (clipPath && typeof clipPath.toSVGString === 'function'
+                    ? clipPath.toSVGString()
+                    : undefined),
               };
             })
           : [];

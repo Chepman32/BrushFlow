@@ -29,6 +29,7 @@ export interface LayerStroke {
   isEraser?: boolean;
   blendMode?: 'clear' | 'normal';
   isFilled?: boolean;
+  clipPathSvg?: string;
 }
 
 export interface Layer {
