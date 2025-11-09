@@ -70,6 +70,7 @@ type DrawnStroke = {
   strokeJoin: 'miter' | 'round' | 'bevel';
   isEraser?: boolean;
   blendMode?: 'clear' | 'normal';
+  isFilled?: boolean;
 };
 
 type CanvasLayer = Layer & {
@@ -133,6 +134,8 @@ export const CanvasScreen: React.FC = () => {
   const [selectedLayerId, setSelectedLayerId] = useState('1');
   const [currentStroke, setCurrentStroke] = useState<DrawnStroke | null>(null);
   const currentStrokeRef = useRef<DrawnStroke | null>(null);
+  const [selectionRect, setSelectionRect] = useState<{x: number; y: number; width: number; height: number} | null>(null);
+  const selectionStartRef = useRef<{x: number; y: number} | null>(null);
   const [artworkName, setArtworkName] = useState('Untitled Artwork');
   const [artworkProjectId, setArtworkProjectId] = useState<string | null>(
     route.params?.projectId ?? null,
@@ -311,35 +314,128 @@ export const CanvasScreen: React.FC = () => {
     }
   }, [isFullscreen]);
 
+  // Helper function to sample color from strokes at a point
+  const sampleColorAtPoint = React.useCallback((x: number, y: number): string | null => {
+    // Iterate through layers from top to bottom
+    const visibleLayers = layersRef.current.filter(layer => layer.visible);
+
+    for (let i = visibleLayers.length - 1; i >= 0; i--) {
+      const layer = visibleLayers[i];
+      // Check strokes from newest to oldest
+      for (let j = layer.strokes.length - 1; j >= 0; j--) {
+        const stroke = layer.strokes[j];
+
+        // Skip eraser strokes
+        if (stroke.isEraser) continue;
+
+        // Check if the point is near the stroke path
+        if (stroke.path) {
+          const distance = 10; // Sample within 10 pixels of stroke
+          const bounds = stroke.path.getBounds();
+
+          // Quick bounds check first
+          if (x >= bounds.x - distance && x <= bounds.x + bounds.width + distance &&
+              y >= bounds.y - distance && y <= bounds.y + bounds.height + distance) {
+            // Found a stroke near this point, return its color
+            return stroke.color;
+          }
+        }
+      }
+    }
+
+    // No stroke found, return canvas background color
+    return '#FFFFFF';
+  }, []);
+
   // Drawing gesture handlers
   const handleDrawStart = React.useCallback((x: number, y: number) => {
     console.log('🎨 Draw start:', x, y, 'tool:', selectedTool);
 
-    const activeLayer = layersRef.current.find(layer => layer.id === selectedLayerId);
-    if (!activeLayer || activeLayer.locked || !activeLayer.visible) {
-      console.log('⚠️ Layer issue - locked/invisible/missing');
-      currentStrokeRef.current = null;
-      setCurrentStroke(null);
-      return;
-    }
-
     // Handle tool-specific actions
     switch (selectedTool) {
       case 'eyedropper':
-        // Color picker will be handled separately - no stroke needed
-        console.log('🎨 Eyedropper tool - use long press');
+        // Sample color at the tapped point
+        const sampledColor = sampleColorAtPoint(x, y);
+        if (sampledColor) {
+          console.log('🎨 Eyedropper sampled color:', sampledColor);
+          setPrimaryColor(sampledColor);
+          setBrushSettings(prev => ({ ...prev, color: sampledColor }));
+          hapticManager.colorSelection();
+        }
         return;
 
       case 'fill':
-        // Fill tool will be handled separately
+        // Fill tool - find stroke at tapped point and change its color
         console.log('🎨 Fill tool selected at:', x, y);
-        // TODO: Implement flood fill
+
+        // Find the stroke to fill
+        let foundStroke: DrawnStroke | null = null;
+        let foundLayerId: string | null = null;
+
+        // Search through visible layers from top to bottom
+        const visibleLayers = layersRef.current.filter(layer => layer.visible);
+        for (let i = visibleLayers.length - 1; i >= 0; i--) {
+          const layer = visibleLayers[i];
+
+          // Check strokes from newest to oldest
+          for (let j = layer.strokes.length - 1; j >= 0; j--) {
+            const stroke = layer.strokes[j];
+
+            // Skip eraser strokes
+            if (stroke.isEraser) continue;
+
+            // Check if point is near the stroke
+            if (stroke.path) {
+              const distance = 15; // Sample within 15 pixels of stroke
+              const bounds = stroke.path.getBounds();
+
+              if (x >= bounds.x - distance && x <= bounds.x + bounds.width + distance &&
+                  y >= bounds.y - distance && y <= bounds.y + bounds.height + distance) {
+                foundStroke = stroke;
+                foundLayerId = layer.id;
+                break;
+              }
+            }
+          }
+
+          if (foundStroke) break;
+        }
+
+        if (foundStroke && foundLayerId) {
+          console.log('🎨 Filling stroke:', foundStroke.id, 'with color:', primaryColor);
+
+          // Update the stroke color
+          setLayers(prevLayers => {
+            const updatedLayers = prevLayers.map(layer =>
+              layer.id === foundLayerId
+                ? {
+                    ...layer,
+                    strokes: layer.strokes.map(stroke =>
+                      stroke.id === foundStroke!.id
+                        ? { ...stroke, color: primaryColor } as DrawnStroke
+                        : stroke
+                    ),
+                  }
+                : layer,
+            );
+            undoRedoManager.saveState(updatedLayers);
+            return updatedLayers;
+          });
+
+          autoSaveManager.markAsModified();
+          hapticManager.strokeCommit();
+        } else {
+          console.log('⚠️ No stroke found to fill at:', x, y);
+          hapticManager.buttonPress();
+        }
         return;
 
       case 'selection':
-        // Selection tool will be handled separately
+        // Start selection rectangle
         console.log('🎨 Selection tool started at:', x, y);
-        // TODO: Implement selection
+        selectionStartRef.current = { x, y };
+        setSelectionRect({ x, y, width: 0, height: 0 });
+        hapticManager.toolSelection();
         return;
 
       case 'smudge':
@@ -363,6 +459,15 @@ export const CanvasScreen: React.FC = () => {
       default:
         console.log('⚠️ Unknown tool:', selectedTool);
         return;
+    }
+
+    // Check layer permissions for drawing tools
+    const activeLayer = layersRef.current.find(layer => layer.id === selectedLayerId);
+    if (!activeLayer || activeLayer.locked || !activeLayer.visible) {
+      console.log('⚠️ Layer issue - locked/invisible/missing');
+      currentStrokeRef.current = null;
+      setCurrentStroke(null);
+      return;
     }
 
     const strokeWidth = Math.max(
@@ -403,9 +508,23 @@ export const CanvasScreen: React.FC = () => {
       currentStrokeRef.current = newStroke;
       setCurrentStroke(newStroke);
     }
-  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor]);
+  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor, hapticManager, sampleColorAtPoint, undoRedoManager, autoSaveManager]);
 
   const handleDrawUpdate = React.useCallback((x: number, y: number) => {
+    // Handle selection tool drag
+    if (selectedTool === 'selection' && selectionStartRef.current) {
+      const start = selectionStartRef.current;
+      const width = x - start.x;
+      const height = y - start.y;
+      setSelectionRect({
+        x: width < 0 ? x : start.x,
+        y: height < 0 ? y : start.y,
+        width: Math.abs(width),
+        height: Math.abs(height),
+      });
+      return;
+    }
+
     if (!currentStrokeRef.current) {
       return;
     }
@@ -422,9 +541,18 @@ export const CanvasScreen: React.FC = () => {
       currentStrokeRef.current = updatedStroke;
       setCurrentStroke(updatedStroke);
     }
-  }, [drawingEngine]);
+  }, [drawingEngine, selectedTool]);
 
   const handleDrawEnd = React.useCallback(() => {
+    // Handle selection tool end
+    if (selectedTool === 'selection' && selectionStartRef.current) {
+      console.log('🎨 Selection completed:', selectionRect);
+      selectionStartRef.current = null;
+      // Keep the selection rect visible for now
+      // In a full implementation, this would allow transforming the selected area
+      return;
+    }
+
     const baseStroke = currentStrokeRef.current;
     const path = drawingEngine.getCurrentPath();
 
@@ -469,7 +597,7 @@ export const CanvasScreen: React.FC = () => {
 
     currentStrokeRef.current = null;
     setCurrentStroke(null);
-  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager]);
+  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager, selectedTool, selectionRect]);
 
   const panResponder = useMemo(
     () =>
@@ -572,6 +700,11 @@ export const CanvasScreen: React.FC = () => {
 
   const handleToolSelect = (tool: Tool) => {
     setSelectedTool(tool);
+    // Clear selection when switching tools
+    if (tool !== 'selection') {
+      setSelectionRect(null);
+      selectionStartRef.current = null;
+    }
     hapticManager.toolSelection();
   };
 
@@ -874,17 +1007,18 @@ export const CanvasScreen: React.FC = () => {
 
               // Eraser strokes use clear blend mode
               const isEraserStroke = stroke.isEraser || stroke.blendMode === 'clear';
+              const isFilled = stroke.isFilled;
 
               return (
                 <Path
                   key={stroke.id}
                   path={stroke.path}
                   color={isEraserStroke ? '#FFFFFF' : stroke.color}
-                  style="stroke"
-                  strokeWidth={stroke.strokeWidth}
+                  style={isFilled ? "fill" : "stroke"}
+                  strokeWidth={isFilled ? undefined : stroke.strokeWidth}
                   opacity={stroke.layerOpacity * stroke.opacity}
-                  strokeCap={stroke.strokeCap || 'round'}
-                  strokeJoin={stroke.strokeJoin || 'round'}
+                  strokeCap={isFilled ? undefined : (stroke.strokeCap || 'round')}
+                  strokeJoin={isFilled ? undefined : (stroke.strokeJoin || 'round')}
                   blendMode={isEraserStroke ? 'clear' : undefined}
                 />
               );
@@ -905,6 +1039,27 @@ export const CanvasScreen: React.FC = () => {
                 strokeCap={currentStroke.strokeCap || 'round'}
                 strokeJoin={currentStroke.strokeJoin || 'round'}
                 blendMode={isCurrentEraser ? 'clear' : undefined}
+              />
+            );
+          })()}
+
+          {/* Selection rectangle */}
+          {selectionRect && selectionRect.width > 0 && selectionRect.height > 0 && (() => {
+            const selectionPath = Skia.Path.Make();
+            selectionPath.addRect({
+              x: selectionRect.x,
+              y: selectionRect.y,
+              width: selectionRect.width,
+              height: selectionRect.height,
+            });
+
+            return (
+              <Path
+                path={selectionPath}
+                color="#4A90E2"
+                style="stroke"
+                strokeWidth={2}
+                opacity={0.8}
               />
             );
           })()}

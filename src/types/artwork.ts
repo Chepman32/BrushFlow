@@ -28,6 +28,7 @@ export interface LayerStroke {
   strokeJoin?: 'miter' | 'round' | 'bevel';
   isEraser?: boolean;
   blendMode?: 'clear' | 'normal';
+  isFilled?: boolean;
 }
 
 export interface Layer {
