@@ -220,33 +220,35 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                 const isSelected = selectedTool === tool.id;
 
                 return (
-                  <TouchableOpacity
-                    key={tool.id}
-                    style={[
-                      styles.toolButton,
-                      isSelected && styles.toolButtonSelected,
-                    ]}
-                    onPress={() => !isLocked && onToolSelect(tool.id)}
-                    activeOpacity={0.7}
-                  >
-                    <Icon
-                      name={tool.icon}
-                      size={28}
-                      color={
-                        isSelected ? colors.text.light : 'rgba(255,255,255,0.6)'
-                      }
-                    />
-                    {isLocked && (
-                      <View style={styles.lockBadge}>
-                        <Icon name="lock" size={12} color={colors.text.light} />
-                      </View>
-                    )}
-                    {tool.isPremium && (
-                      <View style={styles.proBadge}>
-                        <Text style={styles.proBadgeText}>PRO</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
+                  <View key={tool.id} style={styles.toolContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.toolButton,
+                        isSelected && styles.toolButtonSelected,
+                      ]}
+                      onPress={() => !isLocked && onToolSelect(tool.id)}
+                      activeOpacity={0.7}
+                    >
+                      <Icon
+                        name={tool.icon}
+                        size={28}
+                        color={
+                          isSelected ? colors.text.light : 'rgba(255,255,255,0.6)'
+                        }
+                      />
+                      {isLocked && (
+                        <View style={styles.lockBadge}>
+                          <Icon name="lock" size={12} color={colors.text.light} />
+                        </View>
+                      )}
+                      {tool.isPremium && (
+                        <View style={styles.proBadge}>
+                          <Text style={styles.proBadgeText}>PRO</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    <Text style={styles.toolLabel}>{tool.label}</Text>
+                  </View>
                 );
               })}
             </ScrollView>
@@ -480,6 +482,28 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     marginTop: 12,
   },
+  toolContainer: {
+    alignItems: 'center',
+    gap: 6,
+  },
+  toolButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  toolButtonSelected: {
+    backgroundColor: colors.primary.blue,
+  },
+  toolLabel: {
+    ...typography.caption,
+    fontSize: 11,
+    color: colors.text.light,
+    opacity: 0.7,
+    textAlign: 'center',
+  },
   brushTypeContainer: {
     marginBottom: 16,
     gap: 8,
@@ -525,17 +549,6 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.text.light,
     opacity: 0.6,
-  },
-  toolButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  toolButtonSelected: {
-    backgroundColor: colors.primary.blue,
   },
   lockBadge: {
     position: 'absolute',
