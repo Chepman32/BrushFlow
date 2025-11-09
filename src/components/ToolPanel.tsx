@@ -136,6 +136,12 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
   const currentBrushType = BRUSH_TYPES[brushType];
   const bottomOffset = 16 + insets.bottom;
 
+  // Get the currently selected tool info
+  const currentToolInfo = TOOLS.find(tool => tool.id === selectedTool);
+
+  // Determine if we should show brush type or tool type
+  const isBrushLikeTool = selectedTool === 'brush' || selectedTool === 'pencil';
+
   const renderBrushIcon = (
     config: BrushTypeConfig,
     size: number,
@@ -174,13 +180,28 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
           <View style={styles.minimizedContent}>
             <TouchableOpacity
               style={styles.brushToggle}
-              onPress={() => onBrushTypeChange()}
-              accessibilityLabel="Change brush type"
+              onPress={() => setIsExpanded(true)}
+              accessibilityLabel="Open tool panel"
             >
-              {renderBrushIcon(currentBrushType, 20, colors.text.light)}
-              <Text style={styles.brushToggleLabel}>
-                {currentBrushType.label}
-              </Text>
+              {isBrushLikeTool ? (
+                <>
+                  {renderBrushIcon(currentBrushType, 20, colors.text.light)}
+                  <Text style={styles.brushToggleLabel}>
+                    {currentBrushType.label}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Icon
+                    name={currentToolInfo?.icon || 'edit-3'}
+                    size={20}
+                    color={colors.text.light}
+                  />
+                  <Text style={styles.brushToggleLabel}>
+                    {currentToolInfo?.label || 'Tool'}
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.minimizedMain}
