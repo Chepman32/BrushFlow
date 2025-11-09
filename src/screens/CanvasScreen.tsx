@@ -9,7 +9,7 @@ import {
   Alert,
   PanResponder,
 } from 'react-native';
-import { Canvas, Path, Skia } from '@shopify/react-native-skia';
+import { Canvas, Path, Skia, DashPathEffect, StrokeCap, StrokeJoin, Group, PathOp } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
 import {
   Gesture,
@@ -77,6 +77,36 @@ type CanvasLayer = Layer & {
   strokes: DrawnStroke[];
 };
 
+const mapStrokeCapToEnum = (
+  cap?: DrawnStroke['strokeCap'],
+): StrokeCap | undefined => {
+  switch (cap) {
+    case 'butt':
+      return StrokeCap.Butt;
+    case 'round':
+      return StrokeCap.Round;
+    case 'square':
+      return StrokeCap.Square;
+    default:
+      return undefined;
+  }
+};
+
+const mapStrokeJoinToEnum = (
+  join?: DrawnStroke['strokeJoin'],
+): StrokeJoin | undefined => {
+  switch (join) {
+    case 'miter':
+      return StrokeJoin.Miter;
+    case 'round':
+      return StrokeJoin.Round;
+    case 'bevel':
+      return StrokeJoin.Bevel;
+    default:
+      return undefined;
+  }
+};
+
 const createStrokeId = () =>
   `stroke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -136,6 +166,7 @@ export const CanvasScreen: React.FC = () => {
   const currentStrokeRef = useRef<DrawnStroke | null>(null);
   const [selectionRect, setSelectionRect] = useState<{x: number; y: number; width: number; height: number} | null>(null);
   const selectionStartRef = useRef<{x: number; y: number} | null>(null);
+  const [selectedStroke, setSelectedStroke] = useState<DrawnStroke | null>(null);
   const [artworkName, setArtworkName] = useState('Untitled Artwork');
   const [artworkProjectId, setArtworkProjectId] = useState<string | null>(
     route.params?.projectId ?? null,
@@ -172,6 +203,62 @@ export const CanvasScreen: React.FC = () => {
     () => BRUSH_TYPES[brushSettings.brushType],
     [brushSettings.brushType],
   );
+  const selectionMaskPath = useMemo(() => {
+    if (!selectedStroke?.path) {
+      return null;
+    }
+
+    const selectionPath = selectedStroke.path.copy();
+
+    if (selectedStroke.isFilled) {
+      selectionPath.simplify();
+      return selectionPath;
+    }
+
+    const strokeWidth = Math.max(selectedStroke.strokeWidth ?? 1.5, 1.5);
+    const cap = mapStrokeCapToEnum(selectedStroke.strokeCap);
+    const join = mapStrokeJoinToEnum(selectedStroke.strokeJoin);
+
+    const strokeOptions: { width: number; cap?: StrokeCap; join?: StrokeJoin } = {
+      width: strokeWidth,
+    };
+
+    if (cap !== undefined) {
+      strokeOptions.cap = cap;
+    }
+    if (join !== undefined) {
+      strokeOptions.join = join;
+    }
+
+    const strokedPath = selectionPath.stroke(strokeOptions);
+    if (strokedPath) {
+      // Simplify merged contours so we only trace the outer perimeter
+      strokedPath.simplify();
+      return strokedPath;
+    }
+
+    return selectionPath;
+  }, [selectedStroke]);
+
+  const clipPathToSelection = React.useCallback((sourcePath?: SkPath | null): SkPath | null => {
+    if (!sourcePath) {
+      return null;
+    }
+
+    if (!selectionMaskPath) {
+      return sourcePath;
+    }
+
+    const clipped = sourcePath.copy();
+    const mask = selectionMaskPath.copy();
+    const success = clipped.op(mask, PathOp.Intersect);
+
+    if (!success || clipped.isEmpty()) {
+      return null;
+    }
+
+    return clipped;
+  }, [selectionMaskPath]);
 
   // Managers
   const drawingEngine = useRef(new DrawingEngine()).current;
@@ -320,13 +407,19 @@ export const CanvasScreen: React.FC = () => {
       return true; // No selection means all points are valid
     }
 
+    // If an object is selected, use its actual geometry as the mask
+    if (selectionMaskPath) {
+      return selectionMaskPath.contains(x, y);
+    }
+
+    // Fallback to bounding box checks for rectangular selections
     return (
       x >= selectionRect.x &&
       x <= selectionRect.x + selectionRect.width &&
       y >= selectionRect.y &&
       y <= selectionRect.y + selectionRect.height
     );
-  }, [selectionRect]);
+  }, [selectionRect, selectionMaskPath]);
 
   // Helper function to sample color from strokes at a point
   const sampleColorAtPoint = React.useCallback((x: number, y: number): string | null => {
@@ -463,6 +556,7 @@ export const CanvasScreen: React.FC = () => {
         console.log('🎨 Selection tool started at:', x, y);
         selectionStartRef.current = { x, y };
         setSelectionRect({ x, y, width: 0, height: 0 });
+        setSelectedStroke(null); // Clear previous object selection
         hapticManager.toolSelection();
         return;
 
@@ -524,9 +618,10 @@ export const CanvasScreen: React.FC = () => {
     console.log('📍 Path created:', path ? 'YES' : 'NO');
     if (path) {
       const strokeId = createStrokeId();
+      const basePath = path.copy();
       const newStroke: DrawnStroke = {
         id: strokeId,
-        path: path.copy(),
+        path: basePath,
         color: strokeColor,
         strokeWidth,
         opacity: selectedTool === 'eraser' ? 1.0 : strokeOpacity,
@@ -540,7 +635,11 @@ export const CanvasScreen: React.FC = () => {
       };
       console.log('✅ Stroke created:', strokeId, 'width:', strokeWidth, 'color:', strokeColor);
       currentStrokeRef.current = newStroke;
-      setCurrentStroke(newStroke);
+      setCurrentStroke({
+        ...newStroke,
+        path: basePath.copy(),
+        svgPath: basePath.toSVGString(),
+      });
     }
   }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor, hapticManager, sampleColorAtPoint, undoRedoManager, autoSaveManager, isPointInSelection]);
 
@@ -572,13 +671,23 @@ export const CanvasScreen: React.FC = () => {
     const path = drawingEngine.getCurrentPath();
 
     if (path) {
+      const baseStroke = currentStrokeRef.current;
+      if (!baseStroke) {
+        return;
+      }
+
+      const rawPath = path.copy();
       const updatedStroke: DrawnStroke = {
-        ...currentStrokeRef.current,
-        path: path.copy(),
-        svgPath: path.toSVGString(),
+        ...baseStroke,
+        path: rawPath,
+        svgPath: rawPath.toSVGString(),
       };
       currentStrokeRef.current = updatedStroke;
-      setCurrentStroke(updatedStroke);
+      setCurrentStroke({
+        ...updatedStroke,
+        path: rawPath.copy(),
+        svgPath: rawPath.toSVGString(),
+      });
     }
   }, [drawingEngine, selectedTool, isPointInSelection]);
 
@@ -587,10 +696,60 @@ export const CanvasScreen: React.FC = () => {
     if (selectedTool === 'selection' && selectionStartRef.current) {
       console.log('🎨 Selection completed:', selectionRect);
 
-      // If selection is too small (just a tap), clear the selection
+      // If selection is too small (just a tap), try to select object at tap point
       if (selectionRect && selectionRect.width < 5 && selectionRect.height < 5) {
-        console.log('🎨 Clearing selection (tap detected)');
-        setSelectionRect(null);
+        console.log('🎨 Tap detected, searching for object to select');
+
+        const tapX = selectionStartRef.current.x;
+        const tapY = selectionStartRef.current.y;
+
+        // Find stroke at tap point
+        let foundStroke: DrawnStroke | null = null;
+        const visibleLayers = layersRef.current.filter(layer => layer.visible);
+
+        for (let i = visibleLayers.length - 1; i >= 0; i--) {
+          const layer = visibleLayers[i];
+          for (let j = layer.strokes.length - 1; j >= 0; j--) {
+            const stroke = layer.strokes[j];
+            if (stroke.isEraser) continue;
+
+            if (stroke.path) {
+              const distance = 15;
+              const bounds = stroke.path.getBounds();
+
+              if (tapX >= bounds.x - distance && tapX <= bounds.x + bounds.width + distance &&
+                  tapY >= bounds.y - distance && tapY <= bounds.y + bounds.height + distance) {
+                foundStroke = stroke;
+                break;
+              }
+            }
+          }
+          if (foundStroke) break;
+        }
+
+        if (foundStroke && foundStroke.path) {
+          // Select the object - store the entire stroke for rendering
+          const bounds = foundStroke.path.computeTightBounds();
+          const padding = Math.max(foundStroke.strokeWidth / 2, 5); // cover full painted area
+
+          // Store the actual stroke for rendering with dashed border
+          setSelectedStroke(foundStroke);
+
+          setSelectionRect({
+            x: bounds.x - padding,
+            y: bounds.y - padding,
+            width: bounds.width + padding * 2,
+            height: bounds.height + padding * 2,
+          });
+          console.log('🎨 Selected object with bounds:', bounds);
+          hapticManager.strokeCommit();
+        } else {
+          // No object found, clear selection
+          console.log('🎨 No object found, clearing selection');
+          setSelectionRect(null);
+          setSelectedStroke(null);
+          hapticManager.buttonPress();
+        }
       }
 
       selectionStartRef.current = null;
@@ -604,10 +763,11 @@ export const CanvasScreen: React.FC = () => {
 
     let completedStroke: DrawnStroke | null = null;
     if (baseStroke && path) {
+      const rawPath = path.copy();
       completedStroke = {
         ...baseStroke,
-        path: path.copy(),
-        svgPath: path.toSVGString(),
+        path: rawPath,
+        svgPath: rawPath.toSVGString(),
       };
     } else if (baseStroke) {
       completedStroke = {
@@ -624,6 +784,23 @@ export const CanvasScreen: React.FC = () => {
     drawingEngine.endStroke();
 
     if (completedStroke) {
+      const clippedPath = clipPathToSelection(completedStroke.path);
+
+      if (selectionMaskPath && !clippedPath) {
+        console.log('🎨 Stroke entirely outside selection, discarding');
+        currentStrokeRef.current = null;
+        setCurrentStroke(null);
+        return;
+      }
+
+      if (clippedPath) {
+        completedStroke = {
+          ...completedStroke,
+          path: clippedPath,
+          svgPath: clippedPath.toSVGString(),
+        };
+      }
+
       const strokeToAdd = completedStroke; // Capture non-null value for closure
       setLayers(prevLayers => {
         const updatedLayers = prevLayers.map(layer =>
@@ -643,7 +820,7 @@ export const CanvasScreen: React.FC = () => {
 
     currentStrokeRef.current = null;
     setCurrentStroke(null);
-  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager, selectedTool, selectionRect]);
+  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager, selectedTool, selectionRect, clipPathToSelection, selectionMaskPath]);
 
   const panResponder = useMemo(
     () =>
@@ -1072,7 +1249,7 @@ export const CanvasScreen: React.FC = () => {
           {currentStroke && (() => {
             const isCurrentEraser = currentStroke.isEraser || currentStroke.blendMode === 'clear';
 
-            return (
+            const strokeElement = (
               <Path
                 path={currentStroke.path}
                 color={isCurrentEraser ? '#FFFFFF' : currentStroke.color}
@@ -1084,10 +1261,41 @@ export const CanvasScreen: React.FC = () => {
                 blendMode={isCurrentEraser ? 'clear' : undefined}
               />
             );
+
+            if (selectionMaskPath) {
+              return (
+                <Group clip={selectionMaskPath}>
+                  {strokeElement}
+                </Group>
+              );
+            }
+
+            return strokeElement;
           })()}
 
-          {/* Selection rectangle */}
+          {/* Selection visualization */}
           {selectionRect && selectionRect.width > 0 && selectionRect.height > 0 && (() => {
+            // If we have a selected stroke, render a dashed border around its perimeter
+            if (selectedStroke && (selectionMaskPath || selectedStroke.path)) {
+              const selectionPath = (selectionMaskPath ?? selectedStroke.path).copy();
+              const borderWidth = selectedStroke.isFilled ? 1.5 : 2;
+
+              return (
+                <Path
+                  path={selectionPath}
+                  color="#4A90E2"
+                  style="stroke"
+                  strokeWidth={borderWidth}
+                  opacity={1}
+                  strokeCap="round"
+                  strokeJoin="round"
+                >
+                  <DashPathEffect intervals={[8, 6]} />
+                </Path>
+              );
+            }
+
+            // Otherwise render rectangle selection (for drag selections)
             const selectionPath = Skia.Path.Make();
             selectionPath.addRect({
               x: selectionRect.x,
@@ -1105,14 +1313,16 @@ export const CanvasScreen: React.FC = () => {
                   style="fill"
                   opacity={0.1}
                 />
-                {/* Border stroke */}
+                {/* Border stroke with dash effect */}
                 <Path
                   path={selectionPath}
                   color="#4A90E2"
                   style="stroke"
                   strokeWidth={2}
                   opacity={0.8}
-                />
+                >
+                  <DashPathEffect intervals={[10, 5]} />
+                </Path>
               </>
             );
           })()}
