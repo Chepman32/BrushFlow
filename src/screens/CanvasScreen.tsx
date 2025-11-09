@@ -314,6 +314,20 @@ export const CanvasScreen: React.FC = () => {
     }
   }, [isFullscreen]);
 
+  // Helper function to check if point is within selection
+  const isPointInSelection = React.useCallback((x: number, y: number): boolean => {
+    if (!selectionRect || selectionRect.width === 0 || selectionRect.height === 0) {
+      return true; // No selection means all points are valid
+    }
+
+    return (
+      x >= selectionRect.x &&
+      x <= selectionRect.x + selectionRect.width &&
+      y >= selectionRect.y &&
+      y <= selectionRect.y + selectionRect.height
+    );
+  }, [selectionRect]);
+
   // Helper function to sample color from strokes at a point
   const sampleColorAtPoint = React.useCallback((x: number, y: number): string | null => {
     // Iterate through layers from top to bottom
@@ -354,6 +368,13 @@ export const CanvasScreen: React.FC = () => {
     // Handle tool-specific actions
     switch (selectedTool) {
       case 'eyedropper':
+        // Check if point is within selection area
+        if (!isPointInSelection(x, y)) {
+          console.log('⚠️ Eyedropper point outside selection area');
+          hapticManager.buttonPress();
+          return;
+        }
+
         // Sample color at the tapped point
         const sampledColor = sampleColorAtPoint(x, y);
         if (sampledColor) {
@@ -365,6 +386,13 @@ export const CanvasScreen: React.FC = () => {
         return;
 
       case 'fill':
+        // Check if point is within selection area
+        if (!isPointInSelection(x, y)) {
+          console.log('⚠️ Fill point outside selection area');
+          hapticManager.buttonPress();
+          return;
+        }
+
         // Fill tool - find stroke at tapped point and change its color
         console.log('🎨 Fill tool selected at:', x, y);
 
@@ -461,6 +489,12 @@ export const CanvasScreen: React.FC = () => {
         return;
     }
 
+    // Check if point is within selection area
+    if (!isPointInSelection(x, y)) {
+      console.log('⚠️ Point outside selection area');
+      return;
+    }
+
     // Check layer permissions for drawing tools
     const activeLayer = layersRef.current.find(layer => layer.id === selectedLayerId);
     if (!activeLayer || activeLayer.locked || !activeLayer.visible) {
@@ -508,7 +542,7 @@ export const CanvasScreen: React.FC = () => {
       currentStrokeRef.current = newStroke;
       setCurrentStroke(newStroke);
     }
-  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor, hapticManager, sampleColorAtPoint, undoRedoManager, autoSaveManager]);
+  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor, hapticManager, sampleColorAtPoint, undoRedoManager, autoSaveManager, isPointInSelection]);
 
   const handleDrawUpdate = React.useCallback((x: number, y: number) => {
     // Handle selection tool drag
@@ -529,6 +563,11 @@ export const CanvasScreen: React.FC = () => {
       return;
     }
 
+    // Only add points that are within the selection area
+    if (!isPointInSelection(x, y)) {
+      return;
+    }
+
     drawingEngine.addStrokePoint({ x, y });
     const path = drawingEngine.getCurrentPath();
 
@@ -541,12 +580,19 @@ export const CanvasScreen: React.FC = () => {
       currentStrokeRef.current = updatedStroke;
       setCurrentStroke(updatedStroke);
     }
-  }, [drawingEngine, selectedTool]);
+  }, [drawingEngine, selectedTool, isPointInSelection]);
 
   const handleDrawEnd = React.useCallback(() => {
     // Handle selection tool end
     if (selectedTool === 'selection' && selectionStartRef.current) {
       console.log('🎨 Selection completed:', selectionRect);
+
+      // If selection is too small (just a tap), clear the selection
+      if (selectionRect && selectionRect.width < 5 && selectionRect.height < 5) {
+        console.log('🎨 Clearing selection (tap detected)');
+        setSelectionRect(null);
+      }
+
       selectionStartRef.current = null;
       // Keep the selection rect visible for now
       // In a full implementation, this would allow transforming the selected area
@@ -700,11 +746,8 @@ export const CanvasScreen: React.FC = () => {
 
   const handleToolSelect = (tool: Tool) => {
     setSelectedTool(tool);
-    // Clear selection when switching tools
-    if (tool !== 'selection') {
-      setSelectionRect(null);
-      selectionStartRef.current = null;
-    }
+    // Keep selection when switching tools (don't clear it)
+    // Selection will constrain other tools to work only within selected area
     hapticManager.toolSelection();
   };
 
@@ -1054,13 +1097,23 @@ export const CanvasScreen: React.FC = () => {
             });
 
             return (
-              <Path
-                path={selectionPath}
-                color="#4A90E2"
-                style="stroke"
-                strokeWidth={2}
-                opacity={0.8}
-              />
+              <>
+                {/* Semi-transparent fill to show selected area */}
+                <Path
+                  path={selectionPath}
+                  color="#4A90E2"
+                  style="fill"
+                  opacity={0.1}
+                />
+                {/* Border stroke */}
+                <Path
+                  path={selectionPath}
+                  color="#4A90E2"
+                  style="stroke"
+                  strokeWidth={2}
+                  opacity={0.8}
+                />
+              </>
             );
           })()}
         </Canvas>
