@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Image } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -11,6 +11,8 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography } from '../theme';
+import { useSettings } from '../contexts/SettingsContext';
+import type { AppTheme } from '../theme/themes';
 import Icon from 'react-native-vector-icons/Feather';
 import { Tool, BrushSettings, BrushType } from '../types';
 import { BRUSH_TYPES, BRUSH_TYPE_SEQUENCE, type BrushTypeConfig } from '../constants/brushTypes';
@@ -71,6 +73,8 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
   const translateX = useSharedValue(0);
   const insets = useSafeAreaInsets();
   const toolScrollRef = React.useRef<ScrollView>(null);
+  const { theme } = useSettings();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const panelHeight = useSharedValue(MINIMIZED_HEIGHT);
 
@@ -205,7 +209,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
             >
               {isBrushLikeTool ? (
                 <>
-                  {renderBrushIcon(currentBrushType, 20, colors.text.light)}
+                  {renderBrushIcon(currentBrushType, 20, theme.colors.primaryText)}
                   <Text style={styles.brushToggleLabel}>
                     {currentBrushType.label}
                   </Text>
@@ -215,7 +219,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                   <Icon
                     name={currentToolInfo?.icon || 'edit-3'}
                     size={20}
-                    color={colors.text.light}
+                    color={theme.colors.primaryText}
                   />
                   <Text style={styles.brushToggleLabel}>
                     {currentToolInfo?.label || 'Tool'}
@@ -280,12 +284,12 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                         name={tool.icon}
                         size={28}
                         color={
-                          isSelected ? colors.text.light : 'rgba(255,255,255,0.6)'
+                          isSelected ? theme.colors.primaryText : withOpacity(theme.colors.primaryText, 0.6)
                         }
                       />
                       {isLocked && (
                         <View style={styles.lockBadge}>
-                          <Icon name="lock" size={12} color={colors.text.light} />
+                          <Icon name="lock" size={12} color={theme.colors.primaryText} />
                         </View>
                       )}
                       {tool.isPremium && (
@@ -325,7 +329,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                       {renderBrushIcon(
                         config,
                         18,
-                        isSelected ? colors.background.light : colors.text.light,
+                        isSelected ? (theme.isDark ? theme.colors.primaryText : theme.colors.background) : theme.colors.primaryText,
                       )}
                       <Text
                         style={[
@@ -357,9 +361,9 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                   onValueChange={value =>
                     onBrushSettingsChange({ size: Math.round(value) })
                   }
-                  minimumTrackTintColor={colors.primary.blue}
-                  maximumTrackTintColor="rgba(255,255,255,0.2)"
-                  thumbTintColor={colors.text.light}
+                  minimumTrackTintColor={theme.colors.accent}
+                  maximumTrackTintColor={withOpacity(theme.colors.primaryText, 0.2)}
+                  thumbTintColor={theme.colors.primaryText}
                 />
               </View>
 
@@ -376,9 +380,9 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                   onValueChange={value =>
                     onBrushSettingsChange({ opacity: value })
                   }
-                  minimumTrackTintColor={colors.primary.blue}
-                  maximumTrackTintColor="rgba(255,255,255,0.2)"
-                  thumbTintColor={colors.text.light}
+                  minimumTrackTintColor={theme.colors.accent}
+                  maximumTrackTintColor={withOpacity(theme.colors.primaryText, 0.2)}
+                  thumbTintColor={theme.colors.primaryText}
                 />
               </View>
 
@@ -427,7 +431,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                     style={styles.colorPickerButton}
                     onPress={onColorPress}
                   >
-                    <Icon name="droplet" size={20} color={colors.text.light} />
+                    <Icon name="droplet" size={20} color={theme.colors.primaryText} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -440,25 +444,40 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const withOpacity = (color: string, opacity: number) => {
+  // Simple helper to add opacity to hex colors
+  const hex = color.replace('#', '');
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${opacity})`;
+};
+
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   container: {
     position: 'absolute',
     bottom: 20,
     alignSelf: 'center',
     width: SCREEN_WIDTH - 40,
     maxWidth: 600,
-    backgroundColor: 'rgba(20,20,40,0.95)',
+    backgroundColor: withOpacity(theme.colors.card, 0.95),
     borderRadius: 28,
-    shadowColor: '#000',
+    borderWidth: 1,
+    borderColor: withOpacity(theme.colors.border, 0.5),
+    shadowColor: theme.colors.shadow,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: theme.isDark ? 0.5 : 0.3,
     shadowRadius: 16,
     elevation: 8,
     overflow: 'hidden',
     zIndex: 2,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     // Tiny alpha to ensure it captures touches while appearing transparent
     backgroundColor: 'rgba(0,0,0,0.001)',
     zIndex: 1,
@@ -478,11 +497,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: withOpacity(theme.colors.primaryText, 0.12),
   },
   brushToggleLabel: {
-    ...typography.caption,
-    color: colors.text.light,
+    fontSize: typography.fontSize.caption,
+    color: theme.colors.primaryText,
     fontWeight: '600',
   },
   minimizedMain: {
@@ -497,7 +516,7 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
+    borderColor: withOpacity(theme.colors.primaryText, 0.3),
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -507,8 +526,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   brushSizeText: {
-    ...typography.body,
-    color: colors.text.light,
+    fontSize: typography.fontSize.body,
+    color: theme.colors.primaryText,
     fontWeight: '600',
   },
   expandedContent: {
@@ -518,7 +537,7 @@ const styles = StyleSheet.create({
   dragHandle: {
     width: 36,
     height: 5,
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: withOpacity(theme.colors.primaryText, 0.3),
     borderRadius: 3,
     alignSelf: 'center',
     marginBottom: 16,
@@ -537,17 +556,16 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: withOpacity(theme.colors.primaryText, 0.1),
     justifyContent: 'center',
     alignItems: 'center',
   },
   toolButtonSelected: {
-    backgroundColor: colors.primary.blue,
+    backgroundColor: theme.colors.accent,
   },
   toolLabel: {
-    ...typography.caption,
     fontSize: 11,
-    color: colors.text.light,
+    color: theme.colors.secondaryText,
     opacity: 0.7,
     textAlign: 'center',
   },
@@ -561,8 +579,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   brushTypeValue: {
-    ...typography.caption,
-    color: colors.text.light,
+    fontSize: typography.fontSize.caption,
+    color: theme.colors.secondaryText,
     opacity: 0.75,
   },
   brushTypeChips: {
@@ -578,23 +596,23 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: withOpacity(theme.colors.primaryText, 0.2),
   },
   brushChipSelected: {
-    backgroundColor: colors.primary.blue,
-    borderColor: colors.primary.blue,
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
   },
   brushChipLabel: {
-    ...typography.caption,
-    color: colors.text.light,
+    fontSize: typography.fontSize.caption,
+    color: theme.colors.primaryText,
     fontWeight: '600',
   },
   brushChipLabelSelected: {
-    color: colors.background.light,
+    color: theme.isDark ? theme.colors.primaryText : theme.colors.background,
   },
   brushHint: {
-    ...typography.caption,
-    color: colors.text.light,
+    fontSize: typography.fontSize.caption,
+    color: theme.colors.secondaryText,
     opacity: 0.6,
   },
   lockBadge: {
@@ -604,7 +622,7 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: withOpacity(theme.colors.overlay, 0.8),
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -618,7 +636,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   proBadgeText: {
-    ...typography.caption,
     fontSize: 10,
     color: colors.text.dark,
     fontWeight: '700',
@@ -630,8 +647,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   settingLabel: {
-    ...typography.callout,
-    color: colors.text.light,
+    fontSize: typography.fontSize.callout,
+    color: theme.colors.primaryText,
     fontWeight: '600',
   },
   slider: {
@@ -648,7 +665,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: withOpacity(theme.colors.primaryText, 0.1),
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -670,7 +687,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 8,
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
+    borderColor: withOpacity(theme.colors.primaryText, 0.3),
   },
   colorSquareSecondary: {
     position: 'absolute',
@@ -684,7 +701,7 @@ const styles = StyleSheet.create({
   },
   colorPickerButton: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: withOpacity(theme.colors.primaryText, 0.1),
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',

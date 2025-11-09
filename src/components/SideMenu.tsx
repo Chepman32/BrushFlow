@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,8 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography } from '../theme';
+import { useSettings } from '../contexts/SettingsContext';
+import type { AppTheme } from '../theme/themes';
 import Icon from 'react-native-vector-icons/Feather';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -68,6 +70,8 @@ export const SideMenu: React.FC<SideMenuProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const translateX = useSharedValue(-MENU_WIDTH);
+  const { theme } = useSettings();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const backdropOpacity = useSharedValue(0);
   const [renderMenu, setRenderMenu] = React.useState(visible);
 
@@ -143,7 +147,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
             {/* Header Section */}
             <View style={styles.header}>
               <View style={styles.avatar}>
-                <Icon name="user" size={40} color={colors.text.light} />
+                <Icon name="user" size={40} color={theme.colors.primaryText} />
               </View>
               <Text style={styles.userName}>{userName}</Text>
               {isPremiumUser && (
@@ -166,7 +170,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
                     <Icon
                       name={projectsSection.expanded ? 'chevron-down' : 'chevron-right'}
                       size={18}
-                      color="rgba(255,255,255,0.7)"
+                      color={withOpacity(theme.colors.primaryText, 0.7)}
                     />
                     <Text style={styles.sectionTitle}>Projects</Text>
                   </TouchableOpacity>
@@ -174,7 +178,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
                     onPress={projectsSection.onAddProject}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    <Icon name="plus" size={18} color="rgba(255,255,255,0.7)" />
+                    <Icon name="plus" size={18} color={withOpacity(theme.colors.primaryText, 0.7)} />
                   </TouchableOpacity>
                 </View>
                 {projectsSection.expanded && (
@@ -238,7 +242,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
                     color={
                       item.isPremium
                         ? colors.premium.gold
-                        : 'rgba(255,255,255,0.7)'
+                        : theme.colors.primaryText
                     }
                     style={styles.menuIcon}
                   />
@@ -271,13 +275,26 @@ export const SideMenu: React.FC<SideMenuProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const withOpacity = (color: string, opacity: number) => {
+  // Simple helper to add opacity to hex colors
+  const hex = color.replace('#', '');
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${opacity})`;
+};
+
+const createStyles = (theme: AppTheme) => StyleSheet.create({
   container: {
     flex: 1,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: theme.colors.overlay,
   },
   menu: {
     position: 'absolute',
@@ -285,10 +302,10 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: MENU_WIDTH,
-    backgroundColor: colors.background.dark,
-    shadowColor: '#000',
+    backgroundColor: theme.colors.surface,
+    shadowColor: theme.colors.shadow,
     shadowOffset: { width: 2, height: 0 },
-    shadowOpacity: 0.3,
+    shadowOpacity: theme.isDark ? 0.5 : 0.3,
     shadowRadius: 8,
     elevation: 8,
   },
@@ -297,33 +314,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
-    backgroundColor: 'rgba(102,126,234,0.2)',
+    backgroundColor: withOpacity(theme.colors.accent, 0.2),
   },
   avatar: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(102,126,234,0.3)',
+    backgroundColor: withOpacity(theme.colors.accent, 0.3),
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
   },
   userName: {
-    ...typography.title,
-    color: colors.text.light,
+    fontSize: typography.fontSize.title,
+    color: theme.colors.primaryText,
     marginBottom: 8,
+    fontWeight: '600',
   },
   proBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,215,0,0.2)',
+    backgroundColor: withOpacity(colors.premium.gold, 0.2),
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
     gap: 4,
   },
   proBadgeText: {
-    ...typography.caption,
+    fontSize: typography.fontSize.caption,
     color: colors.premium.gold,
     fontWeight: '700',
   },
@@ -342,11 +360,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sectionTitle: {
-    ...typography.caption,
-    color: 'rgba(255,255,255,0.8)',
+    fontSize: 13,
+    color: withOpacity(theme.colors.primaryText, 0.8),
     textTransform: 'uppercase',
     letterSpacing: 1,
-    fontSize: 13,
     marginLeft: 8,
   },
   projectList: {
@@ -356,25 +373,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: withOpacity(theme.colors.primaryText, 0.05),
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 12,
   },
   projectRowDefault: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: withOpacity(theme.colors.primaryText, 0.03),
   },
   projectRowActive: {
-    backgroundColor: 'rgba(102,126,234,0.25)',
+    backgroundColor: withOpacity(theme.colors.accent, 0.25),
   },
   projectName: {
-    ...typography.body,
-    color: 'rgba(255,255,255,0.8)',
+    fontSize: typography.fontSize.body,
+    color: withOpacity(theme.colors.primaryText, 0.8),
     flex: 1,
     marginRight: 12,
   },
   projectNameActive: {
-    color: '#FFFFFF',
+    color: theme.colors.primaryText,
     fontWeight: '600',
   },
   projectCountBadge: {
@@ -382,17 +399,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: withOpacity(theme.colors.primaryText, 0.12),
     alignItems: 'center',
   },
   projectCountText: {
-    ...typography.caption,
-    color: '#FFFFFF',
+    fontSize: typography.fontSize.caption,
+    color: theme.colors.primaryText,
     fontWeight: '600',
   },
   projectEmptyState: {
-    ...typography.caption,
-    color: 'rgba(255,255,255,0.5)',
+    fontSize: typography.fontSize.caption,
+    color: theme.colors.mutedText,
     marginTop: 8,
   },
   menuItems: {
@@ -405,33 +422,33 @@ const styles = StyleSheet.create({
     height: 64,
     paddingHorizontal: 24,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: withOpacity(theme.colors.border, 0.5),
   },
   menuItemActive: {
-    backgroundColor: 'rgba(102,126,234,0.15)',
+    backgroundColor: withOpacity(theme.colors.accent, 0.15),
     borderLeftWidth: 4,
-    borderLeftColor: colors.primary.blue,
+    borderLeftColor: theme.colors.accent,
   },
   menuIcon: {
     marginRight: 16,
   },
   menuItemText: {
-    ...typography.body,
-    color: 'rgba(255,255,255,0.9)',
+    fontSize: typography.fontSize.body,
+    color: theme.colors.primaryText,
     flex: 1,
   },
   menuItemTextPremium: {
     color: colors.premium.gold,
   },
   badge: {
-    backgroundColor: colors.primary.blue,
+    backgroundColor: theme.colors.accent,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
   },
   badgeText: {
-    ...typography.caption,
-    color: colors.text.light,
+    fontSize: typography.fontSize.caption,
+    color: theme.isDark ? theme.colors.primaryText : '#FFFFFF',
     fontWeight: '600',
   },
   footer: {
@@ -439,8 +456,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   footerText: {
-    ...typography.small,
-    color: 'rgba(255,255,255,0.4)',
+    fontSize: typography.fontSize.small,
+    color: theme.colors.mutedText,
     marginBottom: 4,
   },
 });
