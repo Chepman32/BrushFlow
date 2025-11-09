@@ -3,11 +3,11 @@ export type Tool =
   | 'pencil'
   | 'eraser'
   | 'fill'
-  | 'colorPicker'
+  | 'eyedropper'
   | 'selection'
   | 'smudge' // Premium
   | 'blur' // Premium
-  | 'cloneStamp' // Premium
+  | 'clone' // Premium
   | 'symmetry'; // Premium
 
 export type BrushType = 'pen' | 'marker' | 'pencil' | 'leftTip';

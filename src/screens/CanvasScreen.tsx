@@ -68,6 +68,8 @@ type DrawnStroke = {
   brushType: BrushType;
   strokeCap: 'butt' | 'round' | 'square';
   strokeJoin: 'miter' | 'round' | 'bevel';
+  isEraser?: boolean;
+  blendMode?: 'clear' | 'normal';
 };
 
 type CanvasLayer = Layer & {
@@ -312,10 +314,6 @@ export const CanvasScreen: React.FC = () => {
   // Drawing gesture handlers
   const handleDrawStart = React.useCallback((x: number, y: number) => {
     console.log('🎨 Draw start:', x, y, 'tool:', selectedTool);
-    if (selectedTool !== 'brush' && selectedTool !== 'pencil') {
-      console.log('⚠️ Not brush/pencil tool');
-      return;
-    }
 
     const activeLayer = layersRef.current.find(layer => layer.id === selectedLayerId);
     if (!activeLayer || activeLayer.locked || !activeLayer.visible) {
@@ -323,6 +321,48 @@ export const CanvasScreen: React.FC = () => {
       currentStrokeRef.current = null;
       setCurrentStroke(null);
       return;
+    }
+
+    // Handle tool-specific actions
+    switch (selectedTool) {
+      case 'eyedropper':
+        // Color picker will be handled separately - no stroke needed
+        console.log('🎨 Eyedropper tool - use long press');
+        return;
+
+      case 'fill':
+        // Fill tool will be handled separately
+        console.log('🎨 Fill tool selected at:', x, y);
+        // TODO: Implement flood fill
+        return;
+
+      case 'selection':
+        // Selection tool will be handled separately
+        console.log('🎨 Selection tool started at:', x, y);
+        // TODO: Implement selection
+        return;
+
+      case 'smudge':
+      case 'blur':
+      case 'clone':
+        // Premium tools not yet implemented
+        console.log('⚠️ Premium tool not yet implemented:', selectedTool);
+        return;
+
+      case 'symmetry':
+        // Symmetry affects brush drawing
+        console.log('⚠️ Symmetry mode not yet implemented');
+        return;
+
+      case 'brush':
+      case 'pencil':
+      case 'eraser':
+        // These tools use the path drawing system
+        break;
+
+      default:
+        console.log('⚠️ Unknown tool:', selectedTool);
+        return;
     }
 
     const strokeWidth = Math.max(
@@ -334,7 +374,12 @@ export const CanvasScreen: React.FC = () => {
       brushSettings.opacity * currentBrushConfig.opacityMultiplier,
     );
 
-    drawingEngine.startStroke({ x, y }, primaryColor, strokeWidth, strokeOpacity);
+    // For eraser, use background color or transparent color
+    const strokeColor = selectedTool === 'eraser'
+      ? 'rgba(255, 255, 255, 0)' // Transparent for eraser
+      : primaryColor;
+
+    drawingEngine.startStroke({ x, y }, strokeColor, strokeWidth, strokeOpacity);
 
     const path = drawingEngine.getCurrentPath();
     console.log('📍 Path created:', path ? 'YES' : 'NO');
@@ -343,16 +388,18 @@ export const CanvasScreen: React.FC = () => {
       const newStroke: DrawnStroke = {
         id: strokeId,
         path: path.copy(),
-        color: primaryColor,
+        color: strokeColor,
         strokeWidth,
-        opacity: strokeOpacity,
+        opacity: selectedTool === 'eraser' ? 1.0 : strokeOpacity,
         layerId: activeLayer.id,
         svgPath: path.toSVGString(),
         brushType: brushSettings.brushType,
         strokeCap: currentBrushConfig.strokeCap,
         strokeJoin: currentBrushConfig.strokeJoin,
+        isEraser: selectedTool === 'eraser',
+        blendMode: selectedTool === 'eraser' ? 'clear' : undefined,
       };
-      console.log('✅ Stroke created:', strokeId, 'width:', strokeWidth, 'color:', primaryColor);
+      console.log('✅ Stroke created:', strokeId, 'width:', strokeWidth, 'color:', strokeColor);
       currentStrokeRef.current = newStroke;
       setCurrentStroke(newStroke);
     }
@@ -607,6 +654,9 @@ export const CanvasScreen: React.FC = () => {
         ...stroke,
         id: createStrokeId(),
         path: stroke.path?.copy() || Skia.Path.Make(),
+        brushType: stroke.brushType || 'pen',
+        strokeCap: stroke.strokeCap || 'round',
+        strokeJoin: stroke.strokeJoin || 'round',
       })),
     };
 
@@ -821,33 +871,43 @@ export const CanvasScreen: React.FC = () => {
                 console.log('⚠️ Stroke missing path:', stroke.id);
                 return null;
               }
+
+              // Eraser strokes use clear blend mode
+              const isEraserStroke = stroke.isEraser || stroke.blendMode === 'clear';
+
               return (
                 <Path
                   key={stroke.id}
                   path={stroke.path}
-                  color={stroke.color}
+                  color={isEraserStroke ? '#FFFFFF' : stroke.color}
                   style="stroke"
                   strokeWidth={stroke.strokeWidth}
                   opacity={stroke.layerOpacity * stroke.opacity}
                   strokeCap={stroke.strokeCap || 'round'}
                   strokeJoin={stroke.strokeJoin || 'round'}
+                  blendMode={isEraserStroke ? 'clear' : undefined}
                 />
               );
             });
           })()}
 
           {/* Current stroke preview */}
-          {currentStroke && (
-            <Path
-              path={currentStroke.path}
-              color={currentStroke.color}
-              style="stroke"
-              strokeWidth={currentStroke.strokeWidth}
-              opacity={currentStrokeLayerOpacity * currentStroke.opacity}
-              strokeCap={currentStroke.strokeCap || 'round'}
-              strokeJoin={currentStroke.strokeJoin || 'round'}
-            />
-          )}
+          {currentStroke && (() => {
+            const isCurrentEraser = currentStroke.isEraser || currentStroke.blendMode === 'clear';
+
+            return (
+              <Path
+                path={currentStroke.path}
+                color={isCurrentEraser ? '#FFFFFF' : currentStroke.color}
+                style="stroke"
+                strokeWidth={currentStroke.strokeWidth}
+                opacity={currentStrokeLayerOpacity * currentStroke.opacity}
+                strokeCap={currentStroke.strokeCap || 'round'}
+                strokeJoin={currentStroke.strokeJoin || 'round'}
+                blendMode={isCurrentEraser ? 'clear' : undefined}
+              />
+            );
+          })()}
         </Canvas>
       </View>
 

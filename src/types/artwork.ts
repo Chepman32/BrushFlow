@@ -26,6 +26,8 @@ export interface LayerStroke {
   brushType?: BrushType;
   strokeCap?: 'butt' | 'round' | 'square';
   strokeJoin?: 'miter' | 'round' | 'bevel';
+  isEraser?: boolean;
+  blendMode?: 'clear' | 'normal';
 }
 
 export interface Layer {
