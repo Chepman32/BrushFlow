@@ -1004,6 +1004,8 @@ export const CanvasScreen: React.FC = () => {
   };
 
   const handleColorSelect = (color: string) => {
+    // Move current primary color to secondary before setting new color
+    setSecondaryColor(primaryColor);
     setPrimaryColor(color);
     setBrushSettings(prev => ({ ...prev, color }));
     hapticManager.colorSelection();
