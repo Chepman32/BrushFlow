@@ -204,8 +204,14 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
           <View style={styles.minimizedContent}>
             <TouchableOpacity
               style={styles.brushToggle}
-              onPress={() => setIsExpanded(true)}
-              accessibilityLabel="Open tool panel"
+              onPress={() => {
+                if (isBrushLikeTool) {
+                  onBrushTypeChange();
+                } else {
+                  setIsExpanded(true);
+                }
+              }}
+              accessibilityLabel={isBrushLikeTool ? "Change brush type" : "Open tool panel"}
             >
               {isBrushLikeTool ? (
                 <>
@@ -498,6 +504,8 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 18,
     backgroundColor: withOpacity(theme.colors.primaryText, 0.12),
+    minWidth: 120,
+    justifyContent: 'center',
   },
   brushToggleLabel: {
     fontSize: typography.fontSize.caption,
