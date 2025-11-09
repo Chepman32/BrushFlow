@@ -40,6 +40,7 @@ import {
   AutoSaveManager,
   ExportManager,
   FileManager,
+  SelectionSnapshot,
 } from '../services';
 import {
   Tool,
@@ -114,6 +115,22 @@ const createStrokeId = () =>
 
 const createArtworkId = () =>
   `art-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const findStrokeById = (
+  layers: CanvasLayer[],
+  strokeId: string,
+): DrawnStroke | null => {
+  for (let i = layers.length - 1; i >= 0; i--) {
+    const layer = layers[i];
+    for (let j = 0; j < layer.strokes.length; j++) {
+      const stroke = layer.strokes[j];
+      if (stroke.id === strokeId) {
+        return stroke;
+      }
+    }
+  }
+  return null;
+};
 
 type CanvasScreenRouteProp = RouteProp<RootStackParamList, 'Canvas'>;
 
@@ -205,6 +222,35 @@ export const CanvasScreen: React.FC = () => {
     () => BRUSH_TYPES[brushSettings.brushType],
     [brushSettings.brushType],
   );
+  const getSelectionSnapshot = React.useCallback((): SelectionSnapshot => ({
+    rect: selectionRect ? { ...selectionRect } : null,
+    strokeId: selectedStroke?.id ?? null,
+  }), [selectionRect, selectedStroke]);
+
+  const applySelectionSnapshot = React.useCallback((
+    snapshot?: SelectionSnapshot | null,
+    sourceLayers?: CanvasLayer[],
+  ) => {
+    if (!snapshot) {
+      setSelectionRect(null);
+      setSelectedStroke(null);
+      return;
+    }
+
+    setSelectionRect(snapshot.rect ? { ...snapshot.rect } : null);
+
+    if (snapshot.strokeId && snapshot.rect) {
+      const layersToUse = sourceLayers ?? layersRef.current;
+      const stroke = findStrokeById(layersToUse, snapshot.strokeId);
+      setSelectedStroke(stroke ?? null);
+    } else {
+      setSelectedStroke(null);
+    }
+  }, [layersRef]);
+
+  const pushCanvasHistory = React.useCallback((updatedLayers: CanvasLayer[], snapshot?: SelectionSnapshot) => {
+    undoRedoManager.saveState(updatedLayers, snapshot ?? getSelectionSnapshot());
+  }, [getSelectionSnapshot, undoRedoManager]);
   const selectionMaskPath = useMemo(() => {
     if (!selectedStroke?.path) {
       return null;
@@ -353,10 +399,10 @@ export const CanvasScreen: React.FC = () => {
   useEffect(() => {
     layersRef.current = layers;
     if (!hasInitializedUndoRef.current && layers.length > 0) {
-      undoRedoManager.initialize(layers);
+      undoRedoManager.initialize(layers, getSelectionSnapshot());
       hasInitializedUndoRef.current = true;
     }
-  }, [layers, undoRedoManager]);
+  }, [layers, undoRedoManager, getSelectionSnapshot]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -525,7 +571,7 @@ export const CanvasScreen: React.FC = () => {
                   }
                 : layer,
             );
-            undoRedoManager.saveState(updatedLayers);
+            pushCanvasHistory(updatedLayers);
             return updatedLayers;
           });
 
@@ -681,6 +727,7 @@ export const CanvasScreen: React.FC = () => {
     // Handle selection tool end
     if (selectedTool === 'selection' && selectionStartRef.current) {
       console.log('🎨 Selection completed:', selectionRect);
+      let selectionHistoryRecorded = false;
 
       // If selection is too small (just a tap), try to select object at tap point
       if (selectionRect && selectionRect.width < 5 && selectionRect.height < 5) {
@@ -721,24 +768,41 @@ export const CanvasScreen: React.FC = () => {
           // Store the actual stroke for rendering with dashed border
           setSelectedStroke(foundStroke);
 
-          setSelectionRect({
+          const selectionBounds = {
             x: bounds.x - padding,
             y: bounds.y - padding,
             width: bounds.width + padding * 2,
             height: bounds.height + padding * 2,
-          });
+          };
+
+          setSelectionRect(selectionBounds);
           console.log('🎨 Selected object with bounds:', bounds);
           hapticManager.strokeCommit();
+
+          const snapshot: SelectionSnapshot = {
+            rect: selectionBounds,
+            strokeId: foundStroke.id,
+          };
+          pushCanvasHistory(layersRef.current, snapshot);
+          selectionHistoryRecorded = true;
         } else {
           // No object found, clear selection
           console.log('🎨 No object found, clearing selection');
           setSelectionRect(null);
           setSelectedStroke(null);
           hapticManager.buttonPress();
+          pushCanvasHistory(layersRef.current, {
+            rect: null,
+            strokeId: null,
+          });
+          selectionHistoryRecorded = true;
         }
       }
 
       selectionStartRef.current = null;
+      if (!selectionHistoryRecorded) {
+        pushCanvasHistory(layersRef.current, getSelectionSnapshot());
+      }
       // Keep the selection rect visible for now
       // In a full implementation, this would allow transforming the selected area
       return;
@@ -789,7 +853,7 @@ export const CanvasScreen: React.FC = () => {
               }
             : layer,
         );
-        undoRedoManager.saveState(updatedLayers);
+        pushCanvasHistory(updatedLayers);
         return updatedLayers;
       });
       autoSaveManager.markAsModified();
@@ -798,7 +862,7 @@ export const CanvasScreen: React.FC = () => {
 
     currentStrokeRef.current = null;
     setCurrentStroke(null);
-  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager, selectedTool, selectionRect]);
+  }, [drawingEngine, undoRedoManager, autoSaveManager, hapticManager, selectedTool, selectionRect, pushCanvasHistory, getSelectionSnapshot, selectionMaskPath]);
 
   const panResponder = useMemo(
     () =>
@@ -856,9 +920,11 @@ export const CanvasScreen: React.FC = () => {
   const handleUndo = () => {
     const previousState = undoRedoManager.undo();
     if (previousState) {
-      setLayers(previousState as CanvasLayer[]);
+      const restoredLayers = previousState.layers as CanvasLayer[];
+      setLayers(restoredLayers);
       currentStrokeRef.current = null;
       setCurrentStroke(null);
+      applySelectionSnapshot(previousState.selection, restoredLayers);
       hapticManager.undoRedo();
     }
   };
@@ -866,9 +932,11 @@ export const CanvasScreen: React.FC = () => {
   const handleRedo = () => {
     const nextState = undoRedoManager.redo();
     if (nextState) {
-      setLayers(nextState as CanvasLayer[]);
+      const restoredLayers = nextState.layers as CanvasLayer[];
+      setLayers(restoredLayers);
       currentStrokeRef.current = null;
       setCurrentStroke(null);
+      applySelectionSnapshot(nextState.selection, restoredLayers);
       hapticManager.undoRedo();
     }
   };
@@ -883,7 +951,7 @@ export const CanvasScreen: React.FC = () => {
         ...layer,
         strokes: [],
       }));
-      undoRedoManager.saveState(clearedLayers);
+      pushCanvasHistory(clearedLayers);
       return clearedLayers;
     });
 
@@ -893,6 +961,16 @@ export const CanvasScreen: React.FC = () => {
     autoSaveManager.markAsModified();
     hapticManager.buttonPress();
   };
+
+  const handleClearSelectionState = React.useCallback(() => {
+    if (!selectionRect && !selectedStroke) {
+      return;
+    }
+    setSelectionRect(null);
+    setSelectedStroke(null);
+    pushCanvasHistory(layersRef.current, { rect: null, strokeId: null });
+    hapticManager.buttonPress();
+  }, [selectionRect, selectedStroke, pushCanvasHistory, hapticManager, layersRef]);
 
   const toggleFullscreen = () => {
     setIsFullscreen(prev => !prev);
@@ -954,7 +1032,7 @@ export const CanvasScreen: React.FC = () => {
 
     setLayers(prevLayers => {
       const updatedLayers = [...prevLayers, newLayer];
-      undoRedoManager.saveState(updatedLayers);
+      pushCanvasHistory(updatedLayers);
       return updatedLayers;
     });
     setSelectedLayerId(newLayer.id);
@@ -969,7 +1047,7 @@ export const CanvasScreen: React.FC = () => {
     if (selectedLayerId === layerId && newLayers.length > 0) {
       setSelectedLayerId(newLayers[newLayers.length - 1].id);
     }
-    undoRedoManager.saveState(newLayers);
+    pushCanvasHistory(newLayers);
     hapticManager.buttonPress();
   };
 
@@ -985,6 +1063,7 @@ export const CanvasScreen: React.FC = () => {
         ...stroke,
         id: createStrokeId(),
         path: stroke.path?.copy() || Skia.Path.Make(),
+        clipPath: stroke.clipPath?.copy(),
         brushType: stroke.brushType || 'pen',
         strokeCap: stroke.strokeCap || 'round',
         strokeJoin: stroke.strokeJoin || 'round',
@@ -993,7 +1072,7 @@ export const CanvasScreen: React.FC = () => {
 
     setLayers(prevLayers => {
       const updatedLayers = [...prevLayers, duplicatedLayer];
-      undoRedoManager.saveState(updatedLayers);
+      pushCanvasHistory(updatedLayers);
       return updatedLayers;
     });
     setSelectedLayerId(duplicatedLayer.id);
@@ -1005,7 +1084,7 @@ export const CanvasScreen: React.FC = () => {
     const [removed] = newLayers.splice(fromIndex, 1);
     newLayers.splice(toIndex, 0, removed);
     setLayers(newLayers);
-    undoRedoManager.saveState(newLayers);
+    pushCanvasHistory(newLayers);
     hapticManager.layerReorder();
   };
 
@@ -1092,6 +1171,7 @@ export const CanvasScreen: React.FC = () => {
       layers.some(layer => layer.strokes.length > 0) || Boolean(currentStroke),
     [layers, currentStroke],
   );
+  const hasSelection = Boolean(selectionRect || selectedStroke);
 
   return (
     <GestureDetector gesture={threeFingerGesture}>
@@ -1108,6 +1188,32 @@ export const CanvasScreen: React.FC = () => {
             <Icon name="arrow-left" size={24} color={palette.primaryText} />
           </TouchableOpacity>
           <View style={styles.actions}>
+            <TouchableOpacity
+              onPress={handleClearSelectionState}
+              style={styles.iconButton}
+              disabled={!hasSelection}
+              accessibilityLabel="Clear selection"
+            >
+              {(() => {
+                const selectionIconColor = hasSelection
+                  ? palette.primaryText
+                  : withOpacity(palette.primaryText, theme.isDark ? 0.35 : 0.25);
+                return (
+                  <View
+                    style={[
+                      styles.selectionClearIcon,
+                      { borderColor: selectionIconColor },
+                    ]}
+                  >
+                    <Icon
+                      name="x"
+                      size={14}
+                      color={selectionIconColor}
+                    />
+                  </View>
+                );
+              })()}
+            </TouchableOpacity>
             <TouchableOpacity
               onPress={handleUndo}
               style={styles.iconButton}
@@ -1405,6 +1511,15 @@ const createStyles = (theme: AppTheme) => {
     actions: {
       flexDirection: 'row',
       gap: 4,
+    },
+    selectionClearIcon: {
+      width: 22,
+      height: 22,
+      borderRadius: 6,
+      borderWidth: 1.5,
+      borderStyle: 'dashed',
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     fullscreenFloating: {
       position: 'absolute',

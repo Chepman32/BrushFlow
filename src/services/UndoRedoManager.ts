@@ -1,7 +1,13 @@
 import { Layer } from '../types';
 
+export interface SelectionSnapshot {
+  rect: { x: number; y: number; width: number; height: number } | null;
+  strokeId: string | null;
+}
+
 interface CanvasState {
   layers: Layer[];
+  selection?: SelectionSnapshot;
   timestamp: number;
 }
 
@@ -25,9 +31,10 @@ export class UndoRedoManager {
     this.trimStack(this.undoStack);
   }
 
-  initialize(initialLayers: Layer[]): void {
+  initialize(initialLayers: Layer[], selection?: SelectionSnapshot): void {
     const snapshot: CanvasState = {
       layers: this.deepCloneLayers(initialLayers),
+      selection: this.cloneSelection(selection),
       timestamp: Date.now(),
     };
 
@@ -35,9 +42,12 @@ export class UndoRedoManager {
     this.redoStack = [];
   }
 
-  saveState(layers: Layer[]): void {
+  saveState(layers: Layer[], selection?: SelectionSnapshot): void {
     const state: CanvasState = {
       layers: this.deepCloneLayers(layers),
+      selection:
+        this.cloneSelection(selection) ??
+        this.cloneSelection(this.getLatestSelection()),
       timestamp: Date.now(),
     };
 
@@ -48,7 +58,7 @@ export class UndoRedoManager {
     this.redoStack = [];
   }
 
-  undo(): Layer[] | null {
+  undo(): CanvasState | null {
     if (this.undoStack.length <= 1) {
       return null;
     }
@@ -57,13 +67,15 @@ export class UndoRedoManager {
     this.redoStack.push(currentState);
     this.trimStack(this.redoStack);
 
-    // Return the previous state (or empty if no more states)
-    return this.deepCloneLayers(
-      this.undoStack[this.undoStack.length - 1].layers,
-    );
+    const previous = this.undoStack[this.undoStack.length - 1];
+    return {
+      layers: this.deepCloneLayers(previous.layers),
+      selection: this.cloneSelection(previous.selection),
+      timestamp: previous.timestamp,
+    };
   }
 
-  redo(): Layer[] | null {
+  redo(): CanvasState | null {
     if (this.redoStack.length === 0) {
       return null;
     }
@@ -72,7 +84,11 @@ export class UndoRedoManager {
     this.undoStack.push(state);
     this.trimStack(this.undoStack);
 
-    return this.deepCloneLayers(state.layers);
+    return {
+      layers: this.deepCloneLayers(state.layers),
+      selection: this.cloneSelection(state.selection),
+      timestamp: state.timestamp,
+    };
   }
 
   canUndo(): boolean {
@@ -119,5 +135,24 @@ export class UndoRedoManager {
     while (stack.length > this.maxHistorySize) {
       stack.shift();
     }
+  }
+
+  private getLatestSelection(): SelectionSnapshot | undefined {
+    if (this.undoStack.length === 0) {
+      return undefined;
+    }
+    return this.undoStack[this.undoStack.length - 1].selection;
+  }
+
+  private cloneSelection(
+    selection?: SelectionSnapshot | null,
+  ): SelectionSnapshot | undefined {
+    if (!selection) {
+      return selection ?? undefined;
+    }
+    return {
+      rect: selection.rect ? { ...selection.rect } : null,
+      strokeId: selection.strokeId ?? null,
+    };
   }
 }

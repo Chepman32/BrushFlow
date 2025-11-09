@@ -625,18 +625,7 @@ export const GalleryScreen: React.FC = () => {
   };
 
   const confirmDeleteArtwork = (artwork: ArtworkMetadata) => {
-    Alert.alert(
-      'Move to Trash',
-      `Move "${artwork.name}" to trash? You can restore it later from the Trash screen.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Move to Trash',
-          style: 'destructive',
-          onPress: () => performDeleteArtwork(artwork),
-        },
-      ],
-    );
+    performDeleteArtwork(artwork)
   };
 
   const handleMoveArtworkRequest = (artwork: ArtworkMetadata) => {

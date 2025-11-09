@@ -5,6 +5,7 @@ export { DrawingEngine } from './DrawingEngine';
 export { LayerManager } from './LayerManager';
 export { GestureProcessor } from './GestureProcessor';
 export { UndoRedoManager } from './UndoRedoManager';
+export type { SelectionSnapshot } from './UndoRedoManager';
 export { HapticManager } from './HapticManager';
 export { AutoSaveManager } from './AutoSaveManager';
 export { ExportManager } from './ExportManager';
