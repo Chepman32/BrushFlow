@@ -181,7 +181,9 @@ export const RemoveWatermarkModal: React.FC<RemoveWatermarkModalProps> = ({
               trackColor={{ false: '#d9d9d9', true: '#2ECC71' }}
             />
           </View>
+        </ScrollView>
 
+        <View style={styles.ctaContainer}>
           <TouchableOpacity
             style={[styles.ctaButton, isProcessing && styles.ctaButtonDisabled]}
             activeOpacity={0.85}
@@ -197,7 +199,7 @@ export const RemoveWatermarkModal: React.FC<RemoveWatermarkModalProps> = ({
               </>
             )}
           </TouchableOpacity>
-        </ScrollView>
+        </View>
       </SafeAreaView>
     </Modal>
   );
@@ -290,7 +292,6 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     paddingVertical: 24,
-    paddingBottom: 40,
   },
   featureList: {
     backgroundColor: '#fff',
@@ -422,8 +423,15 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 4,
   },
+  ctaContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 24,
+    backgroundColor: '#F6F6F6',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+  },
   ctaButton: {
-    marginTop: 28,
     backgroundColor: '#FF2D55',
     borderRadius: 24,
     paddingVertical: 18,

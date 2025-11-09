@@ -284,6 +284,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     overflow: 'hidden',
+    flexDirection: 'column',
   },
   header: {
     alignItems: 'center',
@@ -291,6 +292,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingBottom: 24,
     backgroundColor: 'rgba(102,126,234,0.1)',
+    flexShrink: 0,
   },
   badgeContainer: {
     width: 80,
@@ -330,7 +332,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   featuresList: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
     padding: 24,
   },
   featureItem: {
@@ -364,6 +367,7 @@ const styles = StyleSheet.create({
     padding: 24,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.1)',
+    flexShrink: 0,
   },
   pricingCard: {
     alignItems: 'center',
