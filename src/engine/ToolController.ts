@@ -50,7 +50,7 @@ export class ToolController {
   }
 
   isToolLocked(tool: Tool, isPremium: boolean): boolean {
-    const premiumTools: Tool[] = ['smudge', 'blur', 'cloneStamp', 'symmetry'];
-    return premiumTools.includes(tool) && !isPremium;
+    // Premium gating disabled – all tools are always available
+    return false;
   }
 }

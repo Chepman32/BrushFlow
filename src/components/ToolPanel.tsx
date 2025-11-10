@@ -31,7 +31,6 @@ interface ToolPanelProps {
   onBrushTypeChange: (nextType?: BrushType) => void;
   onColorPress: () => void;
   onSwapColors: () => void;
-  isPremiumUser: boolean;
 }
 
 const TOOLS: Array<{
@@ -66,7 +65,6 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
   onBrushTypeChange,
   onColorPress,
   onSwapColors,
-  isPremiumUser,
 }) => {
   const [isExpanded, setIsExpanded] = React.useState(false);
   const translateY = useSharedValue(0);
@@ -268,7 +266,6 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
               contentContainerStyle={styles.toolsContainer}
             >
               {TOOLS.map(tool => {
-                const isLocked = tool.isPremium && !isPremiumUser;
                 const isSelected = selectedTool === tool.id;
 
                 return (
@@ -279,10 +276,8 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                         isSelected && styles.toolButtonSelected,
                       ]}
                       onPress={() => {
-                        if (!isLocked) {
-                          onToolSelect(tool.id);
-                          setIsExpanded(false);
-                        }
+                        onToolSelect(tool.id);
+                        setIsExpanded(false);
                       }}
                       activeOpacity={0.7}
                     >
@@ -293,11 +288,6 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
                           isSelected ? theme.colors.primaryText : withOpacity(theme.colors.primaryText, 0.6)
                         }
                       />
-                      {isLocked && (
-                        <View style={styles.lockBadge}>
-                          <Icon name="lock" size={12} color={theme.colors.primaryText} />
-                        </View>
-                      )}
                       {tool.isPremium && (
                         <View style={styles.proBadge}>
                           <Text style={styles.proBadgeText}>PRO</Text>
@@ -622,17 +612,6 @@ const createStyles = (theme: AppTheme) => StyleSheet.create({
     fontSize: typography.fontSize.caption,
     color: theme.colors.secondaryText,
     opacity: 0.6,
-  },
-  lockBadge: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: withOpacity(theme.colors.overlay, 0.8),
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   proBadge: {
     position: 'absolute',
