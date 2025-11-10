@@ -1,32 +1,18 @@
 import React, { useEffect, useMemo } from 'react';
-import { View, StyleSheet, Dimensions, Text } from 'react-native';
-import {
-  Canvas,
-  Circle,
-  Group,
-  LinearGradient,
-  vec,
-} from '@shopify/react-native-skia';
+import { Image, StyleSheet, View } from 'react-native';
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
-  withSequence,
-  withDelay,
-  runOnJS,
   Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+  runOnJS,
 } from 'react-native-reanimated';
 import { useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import type { RootStackParamList } from '../navigation/types';
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppTheme } from '../theme/themes';
-
-const { width, height } = Dimensions.get('window');
-const PARTICLE_COUNT = 200;
-const CENTER_X = width / 2;
-const CENTER_Y = height / 2;
 
 type NavigationProp = StackNavigationProp<RootStackParamList, 'Splash'>;
 
@@ -35,116 +21,43 @@ export const SplashScreen: React.FC = () => {
   const { theme } = useSettings();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
-  // Animation values
-  const logoScale = useSharedValue(0.8);
-  const logoRotation = useSharedValue(0);
-  const textOpacity = useSharedValue(0);
-  const screenOpacity = useSharedValue(1);
+  const logoScale = useSharedValue(0.2);
+  const logoOpacity = useSharedValue(0);
 
   useEffect(() => {
     startAnimation();
   }, []);
 
-  const startAnimation = () => {
-    // Phase 2: Logo solidification (1.2-1.8s)
-    logoScale.value = withDelay(
-      1200,
-      withSpring(1.0, {
-        damping: 15,
-        stiffness: 180,
-        mass: 1,
-      }),
-    );
-
-    logoRotation.value = withDelay(
-      1200,
-      withSequence(
-        withTiming(3, { duration: 200 }),
-        withTiming(-3, { duration: 200 }),
-        withTiming(0, { duration: 200 }),
-      ),
-    );
-
-    // Phase 3: Text reveal (1.8-2.4s)
-    textOpacity.value = withDelay(
-      1800,
-      withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) }),
-    );
-
-    // Phase 4: Transition out (2.4-2.8s)
-    screenOpacity.value = withDelay(
-      2400,
-      withTiming(0, { duration: 400 }, () => {
-        runOnJS(navigateToMain)();
-      }),
-    );
-  };
-
   const navigateToMain = () => {
     navigation.replace('Main', { screen: 'Gallery' });
   };
 
-  const logoAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [
-        { scale: logoScale.value },
-        { rotate: `${logoRotation.value}deg` },
-      ],
-    };
-  });
+  const startAnimation = () => {
+    logoOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.quad) });
 
-  const textAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      opacity: textOpacity.value,
-      transform: [{ translateY: (1 - textOpacity.value) * 20 }],
-    };
-  });
+    logoScale.value = withSequence(
+      withTiming(1.2, { duration: 360, easing: Easing.out(Easing.quad) }),
+      withTiming(0.9, { duration: 260, easing: Easing.out(Easing.quad) }),
+      withTiming(1, { duration: 260, easing: Easing.out(Easing.quad) }, finished => {
+        if (finished) {
+          runOnJS(navigateToMain)();
+        }
+      }),
+    );
+  };
 
-  const screenAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      opacity: screenOpacity.value,
-    };
-  });
-
+  const logoAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: logoOpacity.value,
+    transform: [{ scale: logoScale.value }],
+  }));
   return (
-    <Animated.View style={[styles.container, screenAnimatedStyle]}>
-      <Canvas style={styles.canvas}>
-        <LinearGradient
-          start={vec(0, 0)}
-          end={vec(0, height)}
-          colors={[theme.colors.background, theme.colors.surface]}
-        />
-        <Group>
-          {Array.from({ length: PARTICLE_COUNT }).map((_, index) => {
-            const angle = (index / PARTICLE_COUNT) * Math.PI * 2;
-            const radius = 150;
-            const targetX = CENTER_X + Math.cos(angle) * (radius * 0.3);
-            const targetY = CENTER_Y + Math.sin(angle) * (radius * 0.3);
-
-            return (
-              <Circle
-                key={index}
-                cx={targetX}
-                cy={targetY}
-                r={2}
-                color={theme.colors.accent}
-                opacity={0.6}
-              />
-            );
-          })}
-        </Group>
-      </Canvas>
-
-      <View style={styles.content}>
-        <Animated.View style={[styles.logoContainer, logoAnimatedStyle]}>
-          <View style={styles.logo} />
-        </Animated.View>
-
-        <Animated.Text style={[styles.text, textAnimatedStyle]}>
-          BrushFlow
-        </Animated.Text>
-      </View>
-    </Animated.View>
+    <View style={styles.container}>
+      <Animated.Image
+        source={require('../assets/icons/app.png')}
+        style={[styles.logo, logoAnimatedStyle]}
+        resizeMode="contain"
+      />
+    </View>
   );
 };
 
@@ -153,30 +66,18 @@ const createStyles = (theme: AppTheme) =>
     container: {
       flex: 1,
       backgroundColor: theme.colors.background,
-    },
-    canvas: {
-      position: 'absolute',
-      width,
-      height,
-    },
-    content: {
-      flex: 1,
       justifyContent: 'center',
       alignItems: 'center',
     },
-    logoContainer: {
-      marginBottom: 20,
-    },
     logo: {
-      width: 80,
-      height: 80,
-      borderRadius: 20,
-      backgroundColor: theme.colors.accent,
-    },
-    text: {
-      color: theme.colors.primaryText,
-      fontSize: 32,
-      fontWeight: 'bold',
-      letterSpacing: 2,
+      width: 140,
+      height: 140,
+      borderRadius: 36,
+      backgroundColor: theme.colors.surface,
+      shadowColor: theme.colors.shadow,
+      shadowOpacity: 0.45,
+      shadowOffset: { width: 0, height: 14 },
+      shadowRadius: 28,
+      elevation: 12,
     },
   });
