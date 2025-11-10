@@ -718,8 +718,8 @@ export const CanvasScreen: React.FC = () => {
           }
 
           if (sourceStroke) {
-            const bounds = sourceStroke.path.getBounds();
-            setCloneSourcePoint({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 });
+            // Use the actual tap position as the clone source point
+            setCloneSourcePoint({ x, y });
             setCloneSourceStroke(sourceStroke);
             console.log('🎨 Clone source object selected:', sourceStroke.id);
             hapticManager.toolSelection();
@@ -733,11 +733,9 @@ export const CanvasScreen: React.FC = () => {
         // Second tap - clone the source object to new location
         console.log('🎨 Cloning object to:', x, y);
         if (cloneSourceStroke && cloneSourcePoint) {
-          const bounds = cloneSourceStroke.path.getBounds();
-          const centerX = bounds.x + bounds.width / 2;
-          const centerY = bounds.y + bounds.height / 2;
-          const offsetX = x - centerX;
-          const offsetY = y - centerY;
+          // Use the original tap point as reference for offset
+          const offsetX = x - cloneSourcePoint.x;
+          const offsetY = y - cloneSourcePoint.y;
 
           // Create a new path with the offset
           const clonedPath = Skia.Path.Make();
@@ -1757,9 +1755,9 @@ export const CanvasScreen: React.FC = () => {
               outlinePath.simplify();
             }
 
-            const bounds = outlinePath.getBounds();
-            const x = bounds.x + bounds.width / 2;
-            const y = bounds.y + bounds.height / 2;
+            // Use the stored clone source point for crosshair position
+            const x = cloneSourcePoint.x;
+            const y = cloneSourcePoint.y;
             const size = 15;
 
             return (
