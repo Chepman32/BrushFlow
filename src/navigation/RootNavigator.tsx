@@ -114,7 +114,13 @@ export const RootNavigator = () => {
       >
         <Stack.Screen name="Splash" component={SplashScreen} />
         <Stack.Screen name="Main" component={DrawerNavigator} />
-        <Stack.Screen name="Canvas" component={CanvasScreen} />
+        <Stack.Screen
+          name="Canvas"
+          component={CanvasScreen}
+          options={{
+            gestureEnabled: false,
+          }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
