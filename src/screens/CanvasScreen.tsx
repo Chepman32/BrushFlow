@@ -10,7 +10,7 @@ import {
   Alert,
   PanResponder,
 } from 'react-native';
-import { Canvas, Path, Skia, DashPathEffect, StrokeCap, StrokeJoin, Group } from '@shopify/react-native-skia';
+import { Canvas, Path, Skia, DashPathEffect, StrokeCap, StrokeJoin, Group, BackdropBlur, Rect, Mask } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
 import {
   Gesture,
@@ -75,6 +75,11 @@ type DrawnStroke = {
   isFilled?: boolean;
   clipPath?: SkPath;
   clipPathSvg?: string;
+  effect?: 'blur';
+  blurRadius?: number;
+  blurMaskPath?: SkPath;
+  blurMaskPathSvg?: string;
+  layerOpacity?: number;
 };
 
 type CanvasLayer = Layer & {
@@ -109,6 +114,25 @@ const mapStrokeJoinToEnum = (
     default:
       return undefined;
   }
+};
+
+const buildBlurMaskPath = (
+  path: SkPath | null | undefined,
+  strokeWidth: number,
+  cap?: DrawnStroke['strokeCap'],
+  join?: DrawnStroke['strokeJoin'],
+): SkPath | null => {
+  if (!path) {
+    return null;
+  }
+
+  const outline = path.copy().stroke({
+    width: Math.max(0.5, strokeWidth),
+    cap: mapStrokeCapToEnum(cap) ?? StrokeCap.Round,
+    join: mapStrokeJoinToEnum(join) ?? StrokeJoin.Round,
+  });
+
+  return outline ?? null;
 };
 
 const createStrokeId = () =>
@@ -161,6 +185,7 @@ export const CanvasScreen: React.FC = () => {
     smoothing: 0,
     pressureSensitivity: true,
     brushType: 'pen',
+    blurType: 'gaussian',
   });
   const [primaryColor, setPrimaryColor] = useState('#000000');
   const [secondaryColor, setSecondaryColor] = useState('#FFFFFF');
@@ -340,6 +365,9 @@ export const CanvasScreen: React.FC = () => {
               const clipPath = stroke.clipPathSvg
                 ? Skia.Path.MakeFromSVGString(stroke.clipPathSvg) || undefined
                 : undefined;
+              const blurMaskPath = stroke.blurMaskPathSvg
+                ? Skia.Path.MakeFromSVGString(stroke.blurMaskPathSvg) || undefined
+                : undefined;
 
               return {
                 ...stroke,
@@ -348,6 +376,7 @@ export const CanvasScreen: React.FC = () => {
                 strokeJoin: stroke.strokeJoin ?? config.strokeJoin,
                 path: Skia.Path.MakeFromSVGString(stroke.svgPath) || Skia.Path.Make(),
                 clipPath,
+                blurMaskPath,
               };
             }),
           }));
@@ -477,16 +506,26 @@ export const CanvasScreen: React.FC = () => {
         // Skip eraser strokes
         if (stroke.isEraser) continue;
 
-        // Check if the point is near the stroke path
+        // Check if the point is on or near the stroke path
         if (stroke.path) {
-          const distance = 10; // Sample within 10 pixels of stroke
           const bounds = stroke.path.getBounds();
+          const strokeWidth = stroke.strokeWidth || 5;
+          const tolerance = strokeWidth / 2 + 15; // Larger tolerance for better sampling
 
           // Quick bounds check first
-          if (x >= bounds.x - distance && x <= bounds.x + bounds.width + distance &&
-              y >= bounds.y - distance && y <= bounds.y + bounds.height + distance) {
-            // Found a stroke near this point, return its color
-            return stroke.color;
+          if (x >= bounds.x - tolerance && x <= bounds.x + bounds.width + tolerance &&
+              y >= bounds.y - tolerance && y <= bounds.y + bounds.height + tolerance) {
+
+            // For filled shapes, check if point is inside
+            if (stroke.isFilled && stroke.path.contains(x, y)) {
+              return stroke.color;
+            }
+
+            // For strokes, use simple distance approximation
+            if (!stroke.isFilled) {
+              // Simple heuristic: if within expanded bounds, assume we're on the stroke
+              return stroke.color;
+            }
           }
         }
       }
@@ -512,58 +551,79 @@ export const CanvasScreen: React.FC = () => {
     return newColor || primaryColor;
   }, [sampleColorAtPoint, primaryColor]);
 
-  // Helper function to get blur effect color (average of surrounding pixels)
-  const getBlurColor = React.useCallback((x: number, y: number): string => {
-    const radius = brushSettings.size;
-    const samples: { r: number; g: number; b: number }[] = [];
+  const getBlurRadius = React.useCallback(() => {
+    const base = Math.max(brushSettings.size * 0.8, 8);
+    const opacityBoost = 0.6 + brushSettings.opacity * 0.7;
+    return base * opacityBoost;
+  }, [brushSettings.size, brushSettings.opacity]);
 
-    // Sample colors in multiple rings around the point
-    const rings = 3;
-    const samplesPerRing = 8;
-
-    for (let ring = 1; ring <= rings; ring++) {
-      const ringRadius = (radius / rings) * ring;
-      for (let i = 0; i < samplesPerRing; i++) {
-        const angle = (Math.PI * 2 * i) / samplesPerRing;
-        const sampleX = x + Math.cos(angle) * ringRadius;
-        const sampleY = y + Math.sin(angle) * ringRadius;
-        const color = sampleColorAtPoint(sampleX, sampleY);
-
-        if (color && color !== '#FFFFFF') {
-          // Parse color to RGB
-          const hex = color.replace('#', '');
-          const r = parseInt(hex.substring(0, 2), 16);
-          const g = parseInt(hex.substring(2, 4), 16);
-          const b = parseInt(hex.substring(4, 6), 16);
-          samples.push({ r, g, b });
-        }
+  const renderBlurStroke = React.useCallback(
+    (stroke: DrawnStroke, key?: string, layerOpacityOverride?: number) => {
+      if (stroke.effect !== 'blur' || !stroke.blurRadius) {
+        return null;
       }
-    }
 
-    // Also sample the center point
-    const centerColor = sampleColorAtPoint(x, y);
-    if (centerColor && centerColor !== '#FFFFFF') {
-      const hex = centerColor.replace('#', '');
-      const r = parseInt(hex.substring(0, 2), 16);
-      const g = parseInt(hex.substring(2, 4), 16);
-      const b = parseInt(hex.substring(4, 6), 16);
-      samples.push({ r, g, b });
-      samples.push({ r, g, b }); // Weight center more
-    }
+      let maskPath = stroke.blurMaskPath;
 
-    if (samples.length === 0) {
-      return primaryColor;
-    }
+      if (!maskPath && stroke.blurMaskPathSvg) {
+        maskPath = Skia.Path.MakeFromSVGString(stroke.blurMaskPathSvg) || undefined;
+      }
 
-    // Average all sampled colors for blur effect
-    const avgR = Math.round(samples.reduce((sum, c) => sum + c.r, 0) / samples.length);
-    const avgG = Math.round(samples.reduce((sum, c) => sum + c.g, 0) / samples.length);
-    const avgB = Math.round(samples.reduce((sum, c) => sum + c.b, 0) / samples.length);
+      if (!maskPath && stroke.path) {
+        maskPath =
+          buildBlurMaskPath(
+            stroke.path,
+            stroke.strokeWidth,
+            stroke.strokeCap,
+            stroke.strokeJoin,
+          ) ?? undefined;
+      }
 
-    // Convert back to hex
-    const toHex = (n: number) => n.toString(16).padStart(2, '0');
-    return `#${toHex(avgR)}${toHex(avgG)}${toHex(avgB)}`;
-  }, [sampleColorAtPoint, brushSettings.size, primaryColor]);
+      if (!maskPath) {
+        return null;
+      }
+
+      const combinedOpacity = Math.min(
+        1,
+        (layerOpacityOverride ?? stroke.layerOpacity ?? 1) * stroke.opacity,
+      );
+
+      const blurElement = (
+        <Mask
+          key={key ?? stroke.id}
+          mask={
+            <Path
+              path={maskPath}
+              color="white"
+              style="fill"
+              opacity={combinedOpacity}
+            />
+          }
+        >
+          <BackdropBlur blur={{ x: stroke.blurRadius, y: stroke.blurRadius }}>
+            <Rect
+              x={0}
+              y={0}
+              width={artworkViewport.width}
+              height={artworkViewport.height}
+              color="rgba(255,255,255,0)"
+            />
+          </BackdropBlur>
+        </Mask>
+      );
+
+      if (stroke.clipPath) {
+        return (
+          <Group key={`${key ?? stroke.id}-clip`} clip={stroke.clipPath}>
+            {blurElement}
+          </Group>
+        );
+      }
+
+      return blurElement;
+    },
+    [artworkViewport.width, artworkViewport.height],
+  );
 
   // Drawing gesture handlers
   const handleDrawStart = React.useCallback((x: number, y: number) => {
@@ -817,7 +877,7 @@ export const CanvasScreen: React.FC = () => {
       return;
     }
 
-    const strokeWidth = Math.max(
+    let strokeWidth = Math.max(
       1,
       brushSettings.size * currentBrushConfig.sizeMultiplier,
     );
@@ -826,6 +886,7 @@ export const CanvasScreen: React.FC = () => {
       brushSettings.opacity * currentBrushConfig.opacityMultiplier,
     );
 
+    const isBlurTool = selectedTool === 'blur';
     // Determine stroke color based on tool
     let strokeColor: string;
     switch (selectedTool) {
@@ -836,9 +897,8 @@ export const CanvasScreen: React.FC = () => {
         strokeColor = getSmudgeColor(x, y);
         break;
       case 'blur':
-        strokeColor = getBlurColor(x, y);
-        // Reduce opacity for blur effect to blend better
-        strokeOpacity = Math.min(strokeOpacity * 0.3, 0.3);
+        strokeColor = primaryColor;
+        strokeOpacity = Math.min(1, brushSettings.opacity);
         break;
       default:
         strokeColor = primaryColor;
@@ -851,6 +911,10 @@ export const CanvasScreen: React.FC = () => {
     if (path) {
       const strokeId = createStrokeId();
       const basePath = path.copy();
+      const blurRadius = isBlurTool ? getBlurRadius() : undefined;
+      const blurMaskPath = isBlurTool
+        ? buildBlurMaskPath(basePath, strokeWidth, currentBrushConfig.strokeCap, currentBrushConfig.strokeJoin) ?? undefined
+        : undefined;
       const newStroke: DrawnStroke = {
         id: strokeId,
         path: basePath,
@@ -864,6 +928,10 @@ export const CanvasScreen: React.FC = () => {
         strokeJoin: currentBrushConfig.strokeJoin,
         isEraser: selectedTool === 'eraser',
         blendMode: selectedTool === 'eraser' ? 'clear' : undefined,
+        effect: isBlurTool ? 'blur' : undefined,
+        blurRadius,
+        blurMaskPath,
+        blurMaskPathSvg: blurMaskPath?.toSVGString(),
       };
       console.log('✅ Stroke created:', strokeId, 'width:', strokeWidth, 'color:', strokeColor);
       currentStrokeRef.current = newStroke;
@@ -873,7 +941,7 @@ export const CanvasScreen: React.FC = () => {
         svgPath: basePath.toSVGString(),
       });
     }
-  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor, hapticManager, sampleColorAtPoint, autoSaveManager, isPointInSelection, getSmudgeColor, getBlurColor, cloneSourcePoint, cloneSourceStroke, symmetryMode, artworkViewport.width, artworkViewport.height, pushCanvasHistory]);
+  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor, hapticManager, sampleColorAtPoint, autoSaveManager, isPointInSelection, getSmudgeColor, getBlurRadius, cloneSourcePoint, cloneSourceStroke, symmetryMode, artworkViewport.width, artworkViewport.height, pushCanvasHistory]);
 
   const handleDrawUpdate = React.useCallback((x: number, y: number) => {
     // Handle selection tool drag
@@ -910,13 +978,8 @@ export const CanvasScreen: React.FC = () => {
 
       // Update color dynamically for certain tools
       let updatedColor = baseStroke.color;
-      switch (selectedTool) {
-        case 'smudge':
-          updatedColor = getSmudgeColor(x, y);
-          break;
-        case 'blur':
-          updatedColor = getBlurColor(x, y);
-          break;
+      if (selectedTool === 'smudge') {
+        updatedColor = getSmudgeColor(x, y);
       }
 
       const rawPath = path.copy();
@@ -926,6 +989,17 @@ export const CanvasScreen: React.FC = () => {
         svgPath: rawPath.toSVGString(),
         color: updatedColor,
       };
+
+      if (selectedTool === 'blur') {
+        const maskPath = buildBlurMaskPath(
+          rawPath,
+          baseStroke.strokeWidth,
+          baseStroke.strokeCap,
+          baseStroke.strokeJoin,
+        );
+        updatedStroke.blurMaskPath = maskPath ?? undefined;
+        updatedStroke.blurMaskPathSvg = maskPath?.toSVGString();
+      }
       currentStrokeRef.current = updatedStroke;
       setCurrentStroke({
         ...updatedStroke,
@@ -933,7 +1007,7 @@ export const CanvasScreen: React.FC = () => {
         svgPath: rawPath.toSVGString(),
       });
     }
-  }, [drawingEngine, selectedTool, isPointInSelection, getSmudgeColor, getBlurColor]);
+  }, [drawingEngine, selectedTool, isPointInSelection, getSmudgeColor]);
 
   const handleDrawEnd = React.useCallback(() => {
     // Handle selection tool end
@@ -1045,6 +1119,21 @@ export const CanvasScreen: React.FC = () => {
 
     drawingEngine.endStroke();
 
+    if (completedStroke?.effect === 'blur') {
+      const maskPath = buildBlurMaskPath(
+        completedStroke.path,
+        completedStroke.strokeWidth,
+        completedStroke.strokeCap,
+        completedStroke.strokeJoin,
+      );
+      completedStroke = {
+        ...completedStroke,
+        blurMaskPath: maskPath ?? completedStroke.blurMaskPath,
+        blurMaskPathSvg: maskPath?.toSVGString() ?? completedStroke.blurMaskPathSvg,
+        blurRadius: completedStroke.blurRadius ?? getBlurRadius(),
+      };
+    }
+
     if (completedStroke) {
       if (selectionMaskPath) {
         const clipPathSvg = selectionMaskPath.toSVGString();
@@ -1154,7 +1243,7 @@ export const CanvasScreen: React.FC = () => {
 
     currentStrokeRef.current = null;
     setCurrentStroke(null);
-  }, [drawingEngine, autoSaveManager, hapticManager, selectedTool, selectionRect, pushCanvasHistory, getSelectionSnapshot, selectionMaskPath, symmetryMode, symmetryAxisX, symmetryAxisY]);
+  }, [drawingEngine, autoSaveManager, hapticManager, selectedTool, selectionRect, pushCanvasHistory, getSelectionSnapshot, selectionMaskPath, symmetryMode, symmetryAxisX, symmetryAxisY, getBlurRadius]);
 
   const panResponder = useMemo(
     () =>
@@ -1667,6 +1756,13 @@ export const CanvasScreen: React.FC = () => {
                 return null;
               }
 
+              if (stroke.effect === 'blur') {
+                const blurNode = renderBlurStroke(stroke, stroke.id, stroke.layerOpacity);
+                if (blurNode) {
+                  return blurNode;
+                }
+              }
+
               // Eraser strokes use clear blend mode
               const isEraserStroke = stroke.isEraser || stroke.blendMode === 'clear';
               const isFilled = stroke.isFilled;
@@ -1698,6 +1794,24 @@ export const CanvasScreen: React.FC = () => {
 
           {/* Current stroke preview */}
           {currentStroke && (() => {
+            if (currentStroke.effect === 'blur') {
+              const blurPreview = renderBlurStroke(
+                currentStroke,
+                'current-stroke',
+                currentStrokeLayerOpacity,
+              );
+              if (blurPreview) {
+                if (selectionMaskPath) {
+                  return (
+                    <Group clip={selectionMaskPath}>
+                      {blurPreview}
+                    </Group>
+                  );
+                }
+                return blurPreview;
+              }
+            }
+
             const isCurrentEraser = currentStroke.isEraser || currentStroke.blendMode === 'clear';
 
             const strokeElement = (
