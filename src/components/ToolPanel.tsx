@@ -14,8 +14,17 @@ import { colors, typography } from '../theme';
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppTheme } from '../theme/themes';
 import Icon from 'react-native-vector-icons/Feather';
-import { Tool, BrushSettings, BrushType } from '../types';
-import { BRUSH_TYPES, BRUSH_TYPE_SEQUENCE, type BrushTypeConfig } from '../constants/brushTypes';
+import { Tool, BrushSettings, BrushType, BlurType } from '../types';
+import {
+  BRUSH_TYPES,
+  BRUSH_TYPE_SEQUENCE,
+  type BrushTypeConfig,
+} from '../constants/brushTypes';
+import {
+  BLUR_TYPES,
+  BLUR_TYPE_SEQUENCE,
+  type BlurTypeConfig,
+} from '../constants/blurTypes';
 import Slider from '@react-native-community/slider';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -29,6 +38,7 @@ interface ToolPanelProps {
   onToolSelect: (tool: Tool) => void;
   onBrushSettingsChange: (settings: Partial<BrushSettings>) => void;
   onBrushTypeChange: (nextType?: BrushType) => void;
+  onBlurTypeChange: (nextType?: BlurType) => void;
   onColorPress: () => void;
   onSwapColors: () => void;
 }
@@ -63,6 +73,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
   onToolSelect,
   onBrushSettingsChange,
   onBrushTypeChange,
+  onBlurTypeChange,
   onColorPress,
   onSwapColors,
 }) => {
@@ -156,6 +167,8 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
     });
 
   const currentBrushType = BRUSH_TYPES[brushType];
+  const currentBlurType = brushSettings.blurType ?? BLUR_TYPE_SEQUENCE[0];
+  const currentBlurConfig = BLUR_TYPES[currentBlurType];
   const bottomOffset = 16 + insets.bottom;
 
   // Get the currently selected tool info
@@ -163,6 +176,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
 
   // Determine if we should show brush type or tool type
   const isBrushLikeTool = selectedTool === 'brush' || selectedTool === 'pencil';
+  const isBlurTool = selectedTool === 'blur';
 
   const renderBrushIcon = (
     config: BrushTypeConfig,
@@ -177,6 +191,14 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
         />
       );
     }
+    return <Icon name={config.icon} size={size} color={color} />;
+  };
+
+  const renderBlurIcon = (
+    config: BlurTypeConfig,
+    size: number,
+    color: string,
+  ) => {
     return <Icon name={config.icon} size={size} color={color} />;
   };
 
@@ -205,17 +227,32 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
               onPress={() => {
                 if (isBrushLikeTool) {
                   onBrushTypeChange();
+                } else if (isBlurTool) {
+                  onBlurTypeChange();
                 } else {
                   setIsExpanded(true);
                 }
               }}
-              accessibilityLabel={isBrushLikeTool ? "Change brush type" : "Open tool panel"}
+              accessibilityLabel={
+                isBrushLikeTool
+                  ? 'Change brush type'
+                  : isBlurTool
+                    ? 'Change blur type'
+                    : 'Open tool panel'
+              }
             >
               {isBrushLikeTool ? (
                 <>
                   {renderBrushIcon(currentBrushType, 20, theme.colors.primaryText)}
                   <Text style={styles.brushToggleLabel}>
                     {currentBrushType.label}
+                  </Text>
+                </>
+              ) : isBlurTool ? (
+                <>
+                  {renderBlurIcon(currentBlurConfig, 20, theme.colors.primaryText)}
+                  <Text style={styles.brushToggleLabel}>
+                    {currentBlurConfig.label}
                   </Text>
                 </>
               ) : (
@@ -301,46 +338,100 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
             </ScrollView>
 
             {/* Brush Type Selector */}
-            <View style={styles.brushTypeContainer}>
-              <View style={styles.brushTypeHeader}>
-                <Text style={styles.settingLabel}>Brush Type</Text>
-                <Text style={styles.brushTypeValue}>
-                  {currentBrushType.label}
-                </Text>
-              </View>
-              <View style={styles.brushTypeChips}>
-                {BRUSH_TYPE_SEQUENCE.map(typeId => {
-                  const config = BRUSH_TYPES[typeId];
-                  const isSelected = typeId === brushType;
-                  return (
-                    <TouchableOpacity
-                      key={typeId}
-                      style={[
-                        styles.brushChip,
-                        isSelected && styles.brushChipSelected,
-                      ]}
-                      onPress={() => onBrushTypeChange(typeId)}
-                      activeOpacity={0.8}
-                    >
-                      {renderBrushIcon(
-                        config,
-                        18,
-                        isSelected ? (theme.isDark ? theme.colors.primaryText : theme.colors.background) : theme.colors.primaryText,
-                      )}
-                      <Text
+            {isBrushLikeTool && (
+              <View style={styles.brushTypeContainer}>
+                <View style={styles.brushTypeHeader}>
+                  <Text style={styles.settingLabel}>Brush Type</Text>
+                  <Text style={styles.brushTypeValue}>
+                    {currentBrushType.label}
+                  </Text>
+                </View>
+                <View style={styles.brushTypeChips}>
+                  {BRUSH_TYPE_SEQUENCE.map(typeId => {
+                    const config = BRUSH_TYPES[typeId];
+                    const isSelected = typeId === brushType;
+                    return (
+                      <TouchableOpacity
+                        key={typeId}
                         style={[
-                          styles.brushChipLabel,
-                          isSelected && styles.brushChipLabelSelected,
+                          styles.brushChip,
+                          isSelected && styles.brushChipSelected,
                         ]}
+                        onPress={() => onBrushTypeChange(typeId)}
+                        activeOpacity={0.8}
                       >
-                        {config.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                        {renderBrushIcon(
+                          config,
+                          18,
+                          isSelected
+                            ? theme.isDark
+                              ? theme.colors.primaryText
+                              : theme.colors.background
+                            : theme.colors.primaryText,
+                        )}
+                        <Text
+                          style={[
+                            styles.brushChipLabel,
+                            isSelected && styles.brushChipLabelSelected,
+                          ]}
+                        >
+                          {config.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={styles.brushHint}>{currentBrushType.description}</Text>
               </View>
-              <Text style={styles.brushHint}>{currentBrushType.description}</Text>
-            </View>
+            )}
+
+            {/* Blur Type Selector */}
+            {isBlurTool && (
+              <View style={styles.brushTypeContainer}>
+                <View style={styles.brushTypeHeader}>
+                  <Text style={styles.settingLabel}>Blur Type</Text>
+                  <Text style={styles.brushTypeValue}>
+                    {currentBlurConfig.label}
+                  </Text>
+                </View>
+                <View style={styles.brushTypeChips}>
+                  {BLUR_TYPE_SEQUENCE.map(typeId => {
+                    const config = BLUR_TYPES[typeId];
+                    const isSelected = typeId === currentBlurType;
+                    return (
+                      <TouchableOpacity
+                        key={typeId}
+                        style={[
+                          styles.brushChip,
+                          isSelected && styles.brushChipSelected,
+                        ]}
+                        onPress={() => onBlurTypeChange(typeId)}
+                        activeOpacity={0.8}
+                      >
+                        {renderBlurIcon(
+                          config,
+                          18,
+                          isSelected
+                            ? theme.isDark
+                              ? theme.colors.primaryText
+                              : theme.colors.background
+                            : theme.colors.primaryText,
+                        )}
+                        <Text
+                          style={[
+                            styles.brushChipLabel,
+                            isSelected && styles.brushChipLabelSelected,
+                          ]}
+                        >
+                          {config.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={styles.brushHint}>{currentBlurConfig.description}</Text>
+              </View>
+            )}
 
             {/* Brush Settings */}
             <View style={styles.settingsContainer}>

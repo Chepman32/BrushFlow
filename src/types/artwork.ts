@@ -1,5 +1,5 @@
 import type { SkPath } from '@shopify/react-native-skia';
-import type { BrushType } from './brush';
+import type { BrushType, BlurType } from './brush';
 
 export type BlendMode =
   | 'normal'
@@ -30,6 +30,11 @@ export interface LayerStroke {
   blendMode?: 'clear' | 'normal';
   isFilled?: boolean;
   clipPathSvg?: string;
+  effect?: 'blur';
+  blurRadius?: number;
+  blurType?: BlurType;
+  blurMaskPath?: SkPath;
+  blurMaskPathSvg?: string;
 }
 
 export interface Layer {

@@ -12,6 +12,8 @@ export type Tool =
 
 export type BrushType = 'pen' | 'marker' | 'pencil' | 'leftTip';
 
+export type BlurType = 'gaussian' | 'radial' | 'lens';
+
 export interface BrushSettings {
   size: number; // 1-200 pixels
   opacity: number; // 0-1
@@ -20,6 +22,7 @@ export interface BrushSettings {
   smoothing?: number; // 0-100%
   pressureSensitivity?: boolean;
   brushType: BrushType;
+  blurType?: BlurType; // For blur tool
 }
 
 export interface CanvasTransform {

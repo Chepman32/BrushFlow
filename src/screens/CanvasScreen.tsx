@@ -10,7 +10,7 @@ import {
   Alert,
   PanResponder,
 } from 'react-native';
-import { Canvas, Path, Skia, DashPathEffect, StrokeCap, StrokeJoin, Group, BackdropBlur, Rect, Mask } from '@shopify/react-native-skia';
+import { Canvas, Path, Skia, DashPathEffect, StrokeCap, StrokeJoin, Group, BackdropBlur, Rect } from '@shopify/react-native-skia';
 import type { SkPath } from '@shopify/react-native-skia';
 import {
   Gesture,
@@ -47,6 +47,7 @@ import {
   Tool,
   BrushSettings,
   BrushType,
+  BlurType,
   Layer,
   Artwork,
   ExportOptions,
@@ -55,6 +56,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppTheme } from '../theme/themes';
 import { BRUSH_TYPES, getNextBrushType } from '../constants/brushTypes';
+import { BLUR_TYPES, BLUR_TYPE_SEQUENCE, getNextBlurType } from '../constants/blurTypes';
 
 const { width: viewportWidth, height: viewportHeight } = Dimensions.get('window');
 const DEFAULT_ARTWORK_RESOLUTION = { width: 720, height: 1440 };
@@ -79,6 +81,7 @@ type DrawnStroke = {
   blurRadius?: number;
   blurMaskPath?: SkPath;
   blurMaskPathSvg?: string;
+  blurType?: BlurType;
   layerOpacity?: number;
 };
 
@@ -177,6 +180,10 @@ export const CanvasScreen: React.FC = () => {
     width: viewportWidth,
     height: viewportHeight,
   });
+  const [canvasDimensions, setCanvasDimensions] = useState({
+    width: viewportWidth,
+    height: viewportHeight,
+  });
   const [brushSettings, setBrushSettings] = useState<BrushSettings>({
     size: 10,
     opacity: 1,
@@ -227,8 +234,8 @@ export const CanvasScreen: React.FC = () => {
   const [cloneSourceStroke, setCloneSourceStroke] = useState<DrawnStroke | null>(null);
   const cloneOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const [symmetryMode, setSymmetryMode] = useState<'horizontal' | 'vertical' | 'both' | 'radial' | null>(null);
-  const [symmetryAxisX, setSymmetryAxisX] = useState(artworkViewport.width / 2);
-  const [symmetryAxisY, setSymmetryAxisY] = useState(artworkViewport.height / 2);
+  const [symmetryAxisX, setSymmetryAxisX] = useState(viewportWidth / 2);
+  const [symmetryAxisY, setSymmetryAxisY] = useState(viewportHeight / 2);
   const smudgeColorsRef = useRef<string[]>([]);
 
   const buildArtworkPayload = (latestLayers?: CanvasLayer[]): Artwork =>
@@ -368,10 +375,13 @@ export const CanvasScreen: React.FC = () => {
               const blurMaskPath = stroke.blurMaskPathSvg
                 ? Skia.Path.MakeFromSVGString(stroke.blurMaskPathSvg) || undefined
                 : undefined;
+              const restoredBlurType: BlurType =
+                stroke.blurType ?? BLUR_TYPE_SEQUENCE[0];
 
               return {
                 ...stroke,
                 brushType,
+                blurType: restoredBlurType,
                 strokeCap: stroke.strokeCap ?? config.strokeCap,
                 strokeJoin: stroke.strokeJoin ?? config.strokeJoin,
                 path: Skia.Path.MakeFromSVGString(stroke.svgPath) || Skia.Path.Make(),
@@ -442,6 +452,14 @@ export const CanvasScreen: React.FC = () => {
       hasInitializedUndoRef.current = true;
     }
   }, [layers, undoRedoManager, getSelectionSnapshot]);
+
+  // Update symmetry axes when canvas dimensions change
+  useEffect(() => {
+    if (symmetryMode) {
+      setSymmetryAxisX(canvasDimensions.width / 2);
+      setSymmetryAxisY(canvasDimensions.height / 2);
+    }
+  }, [canvasDimensions.width, canvasDimensions.height, symmetryMode]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -559,14 +577,23 @@ export const CanvasScreen: React.FC = () => {
 
   const renderBlurStroke = React.useCallback(
     (stroke: DrawnStroke, key?: string, layerOpacityOverride?: number) => {
-      if (stroke.effect !== 'blur' || !stroke.blurRadius) {
+      if (stroke.effect !== 'blur') {
+        return null;
+      }
+
+      const fallbackBlurType = brushSettings.blurType ?? BLUR_TYPE_SEQUENCE[0];
+      const blurType = stroke.blurType ?? fallbackBlurType;
+      const blurConfig = BLUR_TYPES[blurType];
+      const baseBlurRadius = stroke.blurRadius ?? getBlurRadius();
+      if (!baseBlurRadius) {
         return null;
       }
 
       let maskPath = stroke.blurMaskPath;
 
       if (!maskPath && stroke.blurMaskPathSvg) {
-        maskPath = Skia.Path.MakeFromSVGString(stroke.blurMaskPathSvg) || undefined;
+        maskPath =
+          Skia.Path.MakeFromSVGString(stroke.blurMaskPathSvg) || undefined;
       }
 
       if (!maskPath && stroke.path) {
@@ -588,19 +615,18 @@ export const CanvasScreen: React.FC = () => {
         (layerOpacityOverride ?? stroke.layerOpacity ?? 1) * stroke.opacity,
       );
 
+      const targetBlur = baseBlurRadius * blurConfig.radiusMultiplier;
+      const overlayOpacity = blurConfig.overlayOpacity * combinedOpacity;
+      const highlightOpacity =
+        (blurConfig.highlightColor ? combinedOpacity : 0) *
+        (blurConfig.highlightStrokeWidthMultiplier ? 1 : 0);
+
       const blurElement = (
-        <Mask
+        <Group
           key={key ?? stroke.id}
-          mask={
-            <Path
-              path={maskPath}
-              color="white"
-              style="fill"
-              opacity={combinedOpacity}
-            />
-          }
+          clip={maskPath}
         >
-          <BackdropBlur blur={{ x: stroke.blurRadius, y: stroke.blurRadius }}>
+          <BackdropBlur blur={{ x: targetBlur, y: targetBlur }}>
             <Rect
               x={0}
               y={0}
@@ -609,7 +635,27 @@ export const CanvasScreen: React.FC = () => {
               color="rgba(255,255,255,0)"
             />
           </BackdropBlur>
-        </Mask>
+          {overlayOpacity > 0 && (
+            <Path
+              path={maskPath}
+              color={blurConfig.overlayColor}
+              style="fill"
+              opacity={overlayOpacity}
+            />
+          )}
+          {blurConfig.highlightColor && blurConfig.highlightStrokeWidthMultiplier && (
+            <Path
+              path={maskPath}
+              color={blurConfig.highlightColor}
+              style="stroke"
+              strokeWidth={Math.max(
+                1,
+                stroke.strokeWidth * blurConfig.highlightStrokeWidthMultiplier,
+              )}
+              opacity={highlightOpacity || combinedOpacity * 0.35}
+            />
+          )}
+        </Group>
       );
 
       if (stroke.clipPath) {
@@ -622,7 +668,7 @@ export const CanvasScreen: React.FC = () => {
 
       return blurElement;
     },
-    [artworkViewport.width, artworkViewport.height],
+    [artworkViewport.width, artworkViewport.height, brushSettings.blurType, getBlurRadius],
   );
 
   // Drawing gesture handlers
@@ -843,8 +889,8 @@ export const CanvasScreen: React.FC = () => {
         // Toggle symmetry mode on first tap
         if (!symmetryMode) {
           setSymmetryMode('vertical'); // Default to vertical symmetry
-          setSymmetryAxisX(artworkViewport.width / 2);
-          setSymmetryAxisY(artworkViewport.height / 2);
+          setSymmetryAxisX(canvasDimensions.width / 2);
+          setSymmetryAxisY(canvasDimensions.height / 2);
           hapticManager.toolSelection();
           console.log('🎨 Symmetry mode enabled: vertical');
         }
@@ -912,6 +958,7 @@ export const CanvasScreen: React.FC = () => {
       const strokeId = createStrokeId();
       const basePath = path.copy();
       const blurRadius = isBlurTool ? getBlurRadius() : undefined;
+      const activeBlurType = brushSettings.blurType ?? BLUR_TYPE_SEQUENCE[0];
       const blurMaskPath = isBlurTool
         ? buildBlurMaskPath(basePath, strokeWidth, currentBrushConfig.strokeCap, currentBrushConfig.strokeJoin) ?? undefined
         : undefined;
@@ -932,6 +979,7 @@ export const CanvasScreen: React.FC = () => {
         blurRadius,
         blurMaskPath,
         blurMaskPathSvg: blurMaskPath?.toSVGString(),
+        blurType: isBlurTool ? activeBlurType : undefined,
       };
       console.log('✅ Stroke created:', strokeId, 'width:', strokeWidth, 'color:', strokeColor);
       currentStrokeRef.current = newStroke;
@@ -941,7 +989,7 @@ export const CanvasScreen: React.FC = () => {
         svgPath: basePath.toSVGString(),
       });
     }
-  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, currentBrushConfig, drawingEngine, primaryColor, hapticManager, sampleColorAtPoint, autoSaveManager, isPointInSelection, getSmudgeColor, getBlurRadius, cloneSourcePoint, cloneSourceStroke, symmetryMode, artworkViewport.width, artworkViewport.height, pushCanvasHistory]);
+  }, [selectedTool, selectedLayerId, brushSettings.size, brushSettings.opacity, brushSettings.brushType, brushSettings.blurType, currentBrushConfig, drawingEngine, primaryColor, hapticManager, sampleColorAtPoint, autoSaveManager, isPointInSelection, getSmudgeColor, getBlurRadius, cloneSourcePoint, cloneSourceStroke, symmetryMode, canvasDimensions.width, canvasDimensions.height, pushCanvasHistory]);
 
   const handleDrawUpdate = React.useCallback((x: number, y: number) => {
     // Handle selection tool drag
@@ -1413,6 +1461,14 @@ export const CanvasScreen: React.FC = () => {
     hapticManager.toolSelection();
   };
 
+  const handleBlurTypeChange = (nextType?: BlurType) => {
+    setBrushSettings(prev => ({
+      ...prev,
+      blurType: nextType ?? getNextBlurType(prev.blurType),
+    }));
+    hapticManager.toolSelection();
+  };
+
   const handleSwapColors = () => {
     const temp = primaryColor;
     setPrimaryColor(secondaryColor);
@@ -1740,7 +1796,14 @@ export const CanvasScreen: React.FC = () => {
       )}
 
       {/* Canvas */}
-      <View style={styles.canvasContainer} {...panResponder.panHandlers}>
+      <View
+        style={styles.canvasContainer}
+        {...panResponder.panHandlers}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          setCanvasDimensions({ width, height });
+        }}
+      >
         <Canvas style={styles.canvas}>
           {/* Render all layers */}
           {(() => {
@@ -1915,25 +1978,25 @@ export const CanvasScreen: React.FC = () => {
 
             if (symmetryMode === 'vertical' || symmetryMode === 'both') {
               axisPath.moveTo(symmetryAxisX, 0);
-              axisPath.lineTo(symmetryAxisX, artworkViewport.height);
+              axisPath.lineTo(symmetryAxisX, canvasDimensions.height);
             }
 
             if (symmetryMode === 'horizontal' || symmetryMode === 'both') {
               axisPath.moveTo(0, symmetryAxisY);
-              axisPath.lineTo(artworkViewport.width, symmetryAxisY);
+              axisPath.lineTo(canvasDimensions.width, symmetryAxisY);
             }
 
             if (symmetryMode === 'radial') {
               // Draw cross for radial symmetry
               axisPath.moveTo(symmetryAxisX, 0);
-              axisPath.lineTo(symmetryAxisX, artworkViewport.height);
+              axisPath.lineTo(symmetryAxisX, canvasDimensions.height);
               axisPath.moveTo(0, symmetryAxisY);
-              axisPath.lineTo(artworkViewport.width, symmetryAxisY);
+              axisPath.lineTo(canvasDimensions.width, symmetryAxisY);
 
               // Draw diagonal lines
               const centerX = symmetryAxisX;
               const centerY = symmetryAxisY;
-              const maxDist = Math.max(artworkViewport.width, artworkViewport.height);
+              const maxDist = Math.max(canvasDimensions.width, canvasDimensions.height);
 
               axisPath.moveTo(centerX - maxDist, centerY - maxDist);
               axisPath.lineTo(centerX + maxDist, centerY + maxDist);
@@ -2021,6 +2084,7 @@ export const CanvasScreen: React.FC = () => {
           onToolSelect={handleToolSelect}
           onBrushSettingsChange={handleBrushSettingsChange}
           onBrushTypeChange={handleBrushTypeChange}
+          onBlurTypeChange={handleBlurTypeChange}
           onColorPress={() => setColorPickerVisible(true)}
           onSwapColors={handleSwapColors}
         />

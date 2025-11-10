@@ -510,7 +510,7 @@ export class FileManager {
       layers: artwork.layers.map(layer => {
         const serializedStrokes = layer.strokes
           ? layer.strokes.map(stroke => {
-              const { path, clipPath, ...strokeRest } = stroke as any;
+              const { path, clipPath, blurMaskPath, ...strokeRest } = stroke as any;
               return {
                 ...strokeRest,
                 svgPath:
@@ -522,6 +522,11 @@ export class FileManager {
                   strokeRest.clipPathSvg ??
                   (clipPath && typeof clipPath.toSVGString === 'function'
                     ? clipPath.toSVGString()
+                    : undefined),
+                blurMaskPathSvg:
+                  strokeRest.blurMaskPathSvg ??
+                  (blurMaskPath && typeof blurMaskPath.toSVGString === 'function'
+                    ? blurMaskPath.toSVGString()
                     : undefined),
               };
             })
