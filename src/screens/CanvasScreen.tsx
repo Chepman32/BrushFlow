@@ -1728,23 +1728,53 @@ export const CanvasScreen: React.FC = () => {
 
           {/* Clone source indicator */}
           {selectedTool === 'clone' && cloneSourceStroke && cloneSourcePoint && (() => {
-            // Draw the selected stroke with a highlighted border
-            const selectionPath = cloneSourceStroke.path.copy();
-            const x = cloneSourcePoint.x;
-            const y = cloneSourcePoint.y;
+            const sourcePath = cloneSourceStroke.path.copy();
+
+            // Create outline path similar to selection tool
+            let outlinePath = sourcePath;
+            if (!cloneSourceStroke.isFilled) {
+              const strokeWidth = Math.max(cloneSourceStroke.strokeWidth ?? 1.5, 1.5);
+              const cap = mapStrokeCapToEnum(cloneSourceStroke.strokeCap);
+              const join = mapStrokeJoinToEnum(cloneSourceStroke.strokeJoin);
+
+              const strokeOptions: { width: number; cap?: StrokeCap; join?: StrokeJoin } = {
+                width: strokeWidth,
+              };
+
+              if (cap !== undefined) {
+                strokeOptions.cap = cap;
+              }
+              if (join !== undefined) {
+                strokeOptions.join = join;
+              }
+
+              const strokedPath = sourcePath.stroke(strokeOptions);
+              if (strokedPath) {
+                strokedPath.simplify();
+                outlinePath = strokedPath;
+              }
+            } else {
+              outlinePath.simplify();
+            }
+
+            const bounds = outlinePath.getBounds();
+            const x = bounds.x + bounds.width / 2;
+            const y = bounds.y + bounds.height / 2;
             const size = 15;
 
             return (
               <>
-                {/* Highlight the selected object */}
+                {/* Dashed border around the object's perimeter */}
                 <Path
-                  path={selectionPath}
+                  path={outlinePath}
                   color="#FF6B6B"
                   style="stroke"
-                  strokeWidth={3}
-                  opacity={0.6}
+                  strokeWidth={2}
+                  opacity={0.8}
+                  strokeCap="round"
+                  strokeJoin="round"
                 >
-                  <DashPathEffect intervals={[6, 4]} />
+                  <DashPathEffect intervals={[8, 6]} />
                 </Path>
 
                 {/* Crosshair at center */}
